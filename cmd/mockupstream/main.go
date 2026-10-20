@@ -32,6 +32,7 @@ type config struct {
 	chunkBytes int           // bytes of text per chunk
 	echo       bool          // echo PII values or tokens found in the request
 	keep       int           // recorded bodies kept
+	overflow   *atomic.Int64 // replies whose echo exceeded the fixed length
 }
 
 type recorder struct {
@@ -74,8 +75,8 @@ func main() {
 	var c config
 	listen := flag.String("listen", ":9000", "address to listen on")
 	flag.DurationVar(&c.firstToken, "first-token", 150*time.Millisecond, "delay before the first chunk")
-	flag.DurationVar(&c.tokenDelay, "token-delay", 25*time.Millisecond, "delay between chunks")
-	flag.IntVar(&c.chunks, "chunks", 120, "reply length in chunks; the reply is padded to exactly this size")
+	flag.DurationVar(&c.tokenDelay, "token-delay", 12*time.Millisecond, "delay between chunks")
+	flag.IntVar(&c.chunks, "chunks", 240, "reply length in chunks; the reply is padded to exactly this size")
 	flag.IntVar(&c.chunkBytes, "chunk-bytes", 4, "bytes of text per chunk (4 is roughly one BPE token)")
 	flag.BoolVar(&c.echo, "echo", true, "echo every PII value or token found in the request, so a proxy has tokens to restore")
 	flag.IntVar(&c.keep, "keep", 20000, "request bodies kept for /_received")
@@ -83,6 +84,7 @@ func main() {
 
 	rec := newRecorder(c.keep)
 	var requests atomic.Int64
+	c.overflow = &atomic.Int64{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
 	mux.HandleFunc("/_received/", func(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +98,7 @@ func main() {
 		io.WriteString(w, body)
 	})
 	mux.HandleFunc("/_stats", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"requests":%d}`+"\n", requests.Load())
+		fmt.Fprintf(w, `{"requests":%d,"overflow":%d}`+"\n", requests.Load(), c.overflow.Load())
 	})
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -130,8 +132,14 @@ func (c config) reply(body []byte) string {
 		sb.WriteString(" lorem")
 	}
 	text := sb.String()
-	if len(text) > budget && !c.echo {
-		text = text[:budget]
+	if len(text) > budget {
+		if c.echo {
+			// The echo alone is longer than the fixed reply, so this reply is
+			// longer than others and timing is no longer request-independent.
+			c.overflow.Add(1)
+		} else {
+			text = text[:budget]
+		}
 	}
 	return text
 }

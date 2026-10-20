@@ -1,0 +1,28 @@
+# Demo stack: the proxy with a Redis vault, in front of the mock upstream.
+#
+#   export PSEUDONYMBENCH_KEY=$(openssl rand -hex 32)
+#   docker compose up --build
+#   curl -s localhost:8080/v1/chat/completions -H 'Content-Type: application/json' \
+#     -d '{"model":"m","messages":[{"role":"user","content":"Email john@acme.com about card 4111 1111 1111 1111"}]}'
+#
+# To point the proxy at a real API instead, drop `mock` and set
+# PSEUDONYMBENCH_UPSTREAM=https://api.openai.com (clients send their own key).
+services:
+  pseudonymbench:
+    build: { context: ., target: pseudonymbench }
+    ports: ["8080:8080"]
+    environment:
+      PSEUDONYMBENCH_KEY: ${PSEUDONYMBENCH_KEY:?set PSEUDONYMBENCH_KEY, e.g. openssl rand -hex 32}
+      PSEUDONYMBENCH_UPSTREAM: ${PSEUDONYMBENCH_UPSTREAM:-http://mock:9000}
+      PSEUDONYMBENCH_VAULT: redis
+      PSEUDONYMBENCH_REDIS_URL: redis://redis:6379/0
+    depends_on: [redis, mock]
+
+  mock:
+    build: { context: ., target: mockupstream }
+    command: ["-listen", ":9000", "-first-token", "100ms", "-token-delay", "20ms"]
+
+  redis:
+    image: redis:7-alpine
+    # Tokens are disposable and values are sealed by the proxy, so skip persistence.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]

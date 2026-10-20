@@ -87,6 +87,9 @@ func TestScoreCounts(t *testing.T) {
 	}
 	rep := Score("x", samples, preds, nil)
 	e, p, s := rep.Kinds[detect.Email], rep.Kinds[detect.Phone], rep.Kinds[detect.SSN]
+	if e.LeakRate != 0 || p.LeakRate != 1 || s.LeakRate != 1-8.0/11 {
+		t.Errorf("leak rates: email %v, phone %v, ssn %v", e.LeakRate, p.LeakRate, s.LeakRate)
+	}
 	if e.RecallOver != 1 || e.RecallExact != 1 || e.PrecisionTyp != 1 {
 		t.Errorf("email = %+v", e)
 	}

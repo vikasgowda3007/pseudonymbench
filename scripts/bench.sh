@@ -20,9 +20,10 @@ NOTE=${NOTE:-"unspecified machine"}
 MOCK_PORT=${MOCK_PORT:-19000}
 PROXY_PORT=${PROXY_PORT:-18080}
 REDIS_PROXY_PORT=${REDIS_PROXY_PORT:-18081}
-# Mock model timing: 150 ms prefill, 25 ms per 4-byte chunk, 120 chunks (the reply
-# length is fixed so it cannot differ between the direct and proxied runs).
-MOCK_ARGS=${MOCK_ARGS:-"-first-token 150ms -token-delay 25ms -chunks 120 -chunk-bytes 4"}
+# Mock model timing: 150 ms prefill, 12 ms per 4-byte chunk, 240 chunks. The reply is
+# padded to a fixed 960 bytes so it cannot differ between direct and proxied runs;
+# the mock counts replies whose echo overflowed that, and this script checks it.
+MOCK_ARGS=${MOCK_ARGS:-"-first-token 150ms -token-delay 12ms -chunks 240 -chunk-bytes 4"}
 
 OUT=results/$RUN
 mkdir -p "$OUT" bin
@@ -73,6 +74,10 @@ for payload in $PAYLOADS; do
   done
 done
 
+overflow=$(curl -fs "http://localhost:$MOCK_PORT/_stats" | sed -n 's/.*"overflow":\([0-9]*\).*/\1/p')
+if [[ "${overflow:-0}" != "0" ]]; then
+  echo "WARNING: $overflow mock replies overflowed the fixed length; raise -chunks in MOCK_ARGS or the comparison is biased" >&2
+fi
 ./bin/benchreport -baseline direct "$OUT"/*.json | tee "$OUT/REPORT.md"
 echo
 echo "machine: $NOTE" | tee -a "$OUT/REPORT.md"

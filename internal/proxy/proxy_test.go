@@ -20,6 +20,7 @@ import (
 	"github.com/vikasgowda3007/pseudonymbench/internal/detect"
 	"github.com/vikasgowda3007/pseudonymbench/internal/jsonx"
 	"github.com/vikasgowda3007/pseudonymbench/internal/mask"
+	"github.com/vikasgowda3007/pseudonymbench/internal/token"
 	"github.com/vikasgowda3007/pseudonymbench/internal/vault"
 )
 
@@ -564,5 +565,71 @@ func TestNewValidatesConfig(t *testing.T) {
 	u, _ := url.Parse("http://x.test")
 	if _, err := New(Config{Upstream: u}); err == nil {
 		t.Error("config without masker, vault and key accepted")
+	}
+}
+
+// A model may rewrite a token instead of copying it. Restoration is an exact
+// match by design: a changed token must come back as the model wrote it, never
+// as the real value and never as someone else's.
+func TestMangledTokensStayVisible(t *testing.T) {
+	mangle := map[string]func(string) string{
+		"lowercase":   strings.ToLower,
+		"no-brackets": func(s string) string { return strings.Trim(s, "<>") },
+		"spaced":      func(s string) string { return strings.Replace(s, "_", " _ ", 1) },
+		"truncated":   func(s string) string { return s[:len(s)/2] },
+		"swapped-id":  func(s string) string { return s[:len(s)-2] + "00>" },
+	}
+	for name, fn := range mangle {
+		for _, streaming := range []bool{false, true} {
+			up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, body []byte) {
+				tok := strings.Fields(userContent(body))[2] // masked email
+				text := "reply " + fn(tok) + " end"
+				if streaming {
+					w.Header().Set("Content-Type", "text/event-stream")
+					for _, piece := range []string{text[:9], text[9:]} {
+						b, _ := jsonx.Encode(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": map[string]any{"content": piece}, "finish_reason": nil}}})
+						fmt.Fprintf(w, "data: %s\n\n", b)
+					}
+					io.WriteString(w, "data: [DONE]\n\n")
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				out, _ := jsonx.Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": text}}}})
+				w.Write(out)
+			})
+			rg := newRig(t, up, nil)
+			resp := post(t, rg, chatBody("please mail john@acme.com now", streaming), nil)
+			var got string
+			if streaming {
+				got = streamText(t, resp)
+			} else {
+				got = completionText(t, resp)
+			}
+			if strings.Contains(got, "john@acme.com") {
+				t.Errorf("%s stream=%v: a mangled token was restored: %q", name, streaming, got)
+			}
+			sent := up.lastBody()
+			tok := token.Pattern.FindString(sent)
+			if want := "reply " + fn(tok) + " end"; got != want {
+				t.Errorf("%s stream=%v: got %q, want the model's text %q unchanged", name, streaming, got, want)
+			}
+		}
+	}
+}
+
+// With nothing to mask the client's bytes go upstream untouched, so key order,
+// spacing and number formatting are preserved.
+func TestCleanRequestIsForwardedByteForByte(t *testing.T) {
+	up := newUpstream(t, echoJSON)
+	rg := newRig(t, up, nil)
+	body := `{ "temperature":0.70,  "messages":[{"content":"hello there","role":"user"}], "model":"m", "seed": 12345678901234567890 }`
+	post(t, rg, body, nil).Body.Close()
+	if got := up.lastBody(); got != body {
+		t.Errorf("upstream received\n %s\nwant\n %s", got, body)
+	}
+	// And a request that does have PII is no longer byte-identical.
+	post(t, rg, strings.Replace(body, "hello there", "mail john@acme.com", 1), nil).Body.Close()
+	if strings.Contains(up.lastBody(), "john@acme.com") {
+		t.Error("PII forwarded")
 	}
 }

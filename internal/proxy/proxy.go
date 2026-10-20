@@ -163,6 +163,10 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request, rec *record) {
 		return
 	}
 
+	if rep.Total() == 0 {
+		masked = body // nothing to replace: forward the client's bytes untouched
+	}
+
 	req, err := h.upstreamRequest(r, masked)
 	if err != nil {
 		h.fail(w, rec, http.StatusInternalServerError, "internal", "could not build upstream request", "internal")

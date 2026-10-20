@@ -1,0 +1,20 @@
+# UNTESTED TEMPLATE. This repo's author has not run LiteLLM yet. Check every
+# key against https://docs.litellm.ai/docs/proxy/guardrails/pii_masking_v2 for
+# the version you pin before publishing numbers from it.
+#
+# Goal: LiteLLM proxy with its Presidio guardrail in front of the mock upstream,
+# configured to mask on the way in and restore on the way out.
+model_list:
+  - model_name: mock-model
+    litellm_params:
+      model: openai/mock-model
+      api_base: http://mock:9000/v1        # cmd/mockupstream
+      api_key: sk-mock
+
+guardrails:
+  - guardrail_name: presidio-pii
+    litellm_params:
+      guardrail: presidio
+      mode: pre_call
+      output_parse_pii: true               # restore masked values in the response
+      default_on: true

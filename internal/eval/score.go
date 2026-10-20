@@ -64,9 +64,13 @@ type KindScore struct {
 	HitExact     int     `json:"hit_exact"`   // gold spans whose boundaries a region matched exactly
 	Predicted    int     `json:"predicted"`   // placeholders of this kind produced
 	PredictedTP  int     `json:"predicted_tp"`
+	GoldChars    int     `json:"gold_chars"`    // bytes inside gold spans
+	CoveredChars int     `json:"covered_chars"` // of those, covered by a changed region
 	RecallOver   float64 `json:"recall_overlap"`
 	RecallExact  float64 `json:"recall_exact"`
 	PrecisionTyp float64 `json:"precision_typed"` // PredictedTP / Predicted
+	LeakRate     float64 `json:"leak_rate_chars"` // 1 - CoveredChars/GoldChars: share of PII bytes left visible
+	F2           float64 `json:"f2"`              // recall-weighted F-score from overlap recall and typed precision
 }
 
 // Report is the outcome of scoring one masker on one dataset.
@@ -124,6 +128,12 @@ func Score(label string, samples []synth.Sample, preds [][]Region, errs []bool) 
 					break
 				}
 			}
+			ks.GoldChars += g.End - g.Start
+			for _, r := range regions {
+				if overlaps(r.Start, r.End, g.Start, g.End) {
+					ks.CoveredChars += min(r.End, g.End) - max(r.Start, g.Start)
+				}
+			}
 			rep.Kinds[g.Kind] = ks
 		}
 		for _, r := range regions {
@@ -158,6 +168,10 @@ func Score(label string, samples []synth.Sample, preds [][]Region, errs []bool) 
 		ks.RecallOver = ratio(ks.HitOverlap, ks.Gold)
 		ks.RecallExact = ratio(ks.HitExact, ks.Gold)
 		ks.PrecisionTyp = ratio(ks.PredictedTP, ks.Predicted)
+		if ks.GoldChars > 0 {
+			ks.LeakRate = 1 - ratio(ks.CoveredChars, ks.GoldChars)
+		}
+		ks.F2 = fBeta(2, ks.PrecisionTyp, ks.RecallOver)
 		rep.Kinds[k] = ks
 	}
 	rep.PrecisionAll = ratio(rep.RegionsTP, rep.Regions)
@@ -176,6 +190,17 @@ func goldTouched(r Region, gold []synth.Span) map[detect.Kind]int {
 	return m
 }
 
+// fBeta is the F-score weighting recall beta times as much as precision. A
+// missed PII value usually costs more than an unneeded mask, so F2 is the
+// headline (Presidio's evaluation docs recommend the same).
+func fBeta(beta, p, r float64) float64 {
+	if p == 0 && r == 0 {
+		return 0
+	}
+	b2 := beta * beta
+	return (1 + b2) * p * r / (b2*p + r)
+}
+
 func overlaps(a0, a1, b0, b1 int) bool { return a0 < b1 && b0 < a1 }
 
 func ratio(a, b int) float64 {
@@ -192,7 +217,7 @@ func (r Report) Markdown() string {
 	if r.Errors > 0 {
 		fmt.Fprintf(&sb, ", %d rejected or unscored", r.Errors)
 	}
-	sb.WriteString("\n\n| kind | gold | recall (overlap) | recall (exact span) | predicted | precision (typed) |\n|---|---:|---:|---:|---:|---:|\n")
+	sb.WriteString("\n\n| kind | gold | recall (overlap) | recall (exact span) | bytes left visible | predicted | precision (typed) | F2 |\n|---|---:|---:|---:|---:|---:|---:|---:|\n")
 	kinds := make([]detect.Kind, 0, len(r.Kinds))
 	for k := range r.Kinds {
 		kinds = append(kinds, k)
@@ -204,11 +229,13 @@ func (r Report) Markdown() string {
 		if ks.Predicted > 0 {
 			prec = fmt.Sprintf("%.3f", ks.PrecisionTyp)
 		}
-		rec, recx := "n/a", "n/a"
+		rec, recx, leak, f2 := "n/a", "n/a", "n/a", "n/a"
 		if ks.Gold > 0 {
 			rec, recx = fmt.Sprintf("%.3f", ks.RecallOver), fmt.Sprintf("%.3f", ks.RecallExact)
+			leak = fmt.Sprintf("%.1f%%", 100*ks.LeakRate)
+			f2 = fmt.Sprintf("%.3f", ks.F2)
 		}
-		fmt.Fprintf(&sb, "| %s | %d | %s | %s | %d | %s |\n", k, ks.Gold, rec, recx, ks.Predicted, prec)
+		fmt.Fprintf(&sb, "| %s | %d | %s | %s | %s | %d | %s | %s |\n", k, ks.Gold, rec, recx, leak, ks.Predicted, prec, f2)
 	}
 	fmt.Fprintf(&sb, "\nOverall precision (any changed region overlapping a gold span): %.3f over %d replacements. ", r.PrecisionAll, r.Regions)
 	fmt.Fprintf(&sb, "Clean text (no PII): %d of %d samples had something masked (%.1f%%).", r.CleanWithRegion, r.CleanSamples, 100*r.CleanFPRate)

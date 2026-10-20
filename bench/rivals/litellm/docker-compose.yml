@@ -1,0 +1,26 @@
+# UNTESTED TEMPLATE (see config.yaml). Pin image digests before measuring.
+#
+#   docker compose -f bench/rivals/litellm/docker-compose.yml up
+#   RIVALS="litellm=http://localhost:4000/v1/chat/completions" scripts/eval.sh
+#
+# scripts/eval.sh expects the rival's upstream to be the mock on host port 19001
+# (-first-token 0 for evaluation); for scripts/bench.sh use the timed mock on 19000.
+services:
+  mock:
+    build: { context: ../../.., target: mockupstream }
+    command: ["-listen", ":9000", "-first-token", "150ms", "-token-delay", "25ms"]
+    ports: ["19000:9000"]
+  presidio-analyzer:
+    image: ghcr.io/data-privacy-stack/presidio-analyzer:latest   # pin a digest
+  presidio-anonymizer:
+    image: ghcr.io/data-privacy-stack/presidio-anonymizer:latest # pin a digest
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable                    # pin a version
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes: ["./config.yaml:/app/config.yaml:ro"]
+    environment:
+      PRESIDIO_ANALYZER_API_BASE: http://presidio-analyzer:3000
+      PRESIDIO_ANONYMIZER_API_BASE: http://presidio-anonymizer:3000
+      LITELLM_MASTER_KEY: sk-bench
+    ports: ["4000:4000"]
+    depends_on: [mock, presidio-analyzer, presidio-anonymizer]
