@@ -1,23 +1,35 @@
 package detect
 
-import (
-	"regexp"
-	"strconv"
-)
+import "strconv"
 
 // A card candidate is a run of digit groups joined by single spaces or
 // hyphens. The detector tries every window of whole groups holding 13 to 19
 // digits and accepts the first that passes the separator, Luhn and issuer
 // checks. Windows never start or end inside a group, so a 20-digit order ID is
 // not mined for a card number.
-var digitRunRE = regexp.MustCompile(`[0-9](?:[ -]?[0-9])*`)
-
 type group struct{ start, end int } // byte span of one digit group
 
 func findCards(s string) []Match {
 	var out []Match
-	for _, r := range digitRunRE.FindAllStringIndex(s, -1) {
-		out = append(out, cardsInRun(s, r[0], r[1])...)
+	for i := 0; i < len(s); {
+		if !isDigit(s[i]) {
+			i++
+			continue
+		}
+		// A run is a digit followed by any number of (optional single space or
+		// hyphen, digit) pairs: the regex `[0-9](?:[ -]?[0-9])*`.
+		j := i + 1
+		for j < len(s) {
+			if isDigit(s[j]) {
+				j++
+			} else if (s[j] == ' ' || s[j] == '-') && j+1 < len(s) && isDigit(s[j+1]) {
+				j += 2
+			} else {
+				break
+			}
+		}
+		out = append(out, cardsInRun(s, i, j)...)
+		i = j
 	}
 	return out
 }

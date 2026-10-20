@@ -1,12 +1,5 @@
 package detect
 
-import "regexp"
-
-// The regex only finds a start (two letters, two digits) and a generous tail.
-// The span is then cut to the length the country code requires, so an IBAN
-// followed by an uppercase word keeps the word out of the match.
-var ibanRE = regexp.MustCompile(`\b[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]){11,30}`)
-
 // ibanLen maps country code to total IBAN length. Values come from the SWIFT
 // IBAN registry as commonly published; the registry and ISO 13616 pages could
 // not be fetched while researching (HTTP 403), so a wrong entry here would
@@ -24,23 +17,46 @@ var ibanLen = map[string]int{
 	"TR": 26, "UA": 29, "VA": 22, "VG": 24, "XK": 20,
 }
 
+// findIBANs scans for a candidate shaped like the regex
+// `\b[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]){11,30}`: two capitals and two digits at a
+// word boundary, then 11 to 30 more capitals or digits, each optionally preceded
+// by one space. The span is then cut to the length the country code requires, so
+// an IBAN followed by an uppercase word keeps the word out of the match.
+// ref_test.go keeps the regex version for a differential test.
 func findIBANs(s string) []Match {
 	var out []Match
-	for _, r := range ibanRE.FindAllStringIndex(s, -1) {
-		want, ok := ibanLen[s[r[0]:r[0]+2]]
-		if !ok {
+	for i := 0; i+4 <= len(s); i++ {
+		if !isUpper(s[i]) || (i > 0 && isWord(s[i-1])) || !isUpper(s[i+1]) || !isDigit(s[i+2]) || !isDigit(s[i+3]) {
 			continue
 		}
-		end, compact, ok := ibanSpan(s, r[0], r[1], want)
-		if !ok || (end < len(s) && isAlnum(s[end])) {
+		// Greedy tail, as the regex would match it.
+		j, n := i+4, 0
+		for n < 30 {
+			k := j
+			if k < len(s) && s[k] == ' ' {
+				k++
+			}
+			if k < len(s) && (isUpper(s[k]) || isDigit(s[k])) {
+				j, n = k+1, n+1
+				continue
+			}
+			break
+		}
+		if n < 11 {
 			continue
 		}
-		if mod97(compact) {
-			out = append(out, Match{Kind: IBAN, Start: r[0], End: end})
+		// The regex match [i, j) is consumed whether or not it validates.
+		if want, ok := ibanLen[s[i:i+2]]; ok {
+			if end, compact, ok := ibanSpan(s, i, j, want); ok && !(end < len(s) && isAlnum(s[end])) && mod97(compact) {
+				out = append(out, Match{Kind: IBAN, Start: i, End: end})
+			}
 		}
+		i = j - 1
 	}
 	return out
 }
+
+func isUpper(c byte) bool { return c >= 'A' && c <= 'Z' }
 
 // ibanSpan collects want alphanumeric characters from s[start:limit], skipping
 // single spaces, and returns the end offset and the compact form.

@@ -6,9 +6,85 @@ import "regexp"
 // with or without a country code. Numbers written without a + in other
 // national formats ("020 7946 0958") are misses by design: without a region
 // hint they are indistinguishable from IDs.
-var phoneRE = regexp.MustCompile(
-	`\+[0-9]{1,3}(?:[ .\-]?\(?[0-9]{1,4}\)?){2,5}` +
-		`|(?:1[ .\-]?)?(?:\([0-9]{3}\)|[0-9]{3})[ .\-]?[0-9]{3}[ .\-]?[0-9]{4}`)
+//
+// The North American shape is matched by hand (matchNANP) and the international
+// one by an anchored regex tried only at a '+'. Together they select exactly
+// what the single regex in ref_test.go selects:
+//
+//	\+[0-9]{1,3}(?:[ .\-]?\(?[0-9]{1,4}\)?){2,5}
+//	|(?:1[ .\-]?)?(?:\([0-9]{3}\)|[0-9]{3})[ .\-]?[0-9]{3}[ .\-]?[0-9]{4}
+var phoneIntlRE = regexp.MustCompile(`^\+[0-9]{1,3}(?:[ .\-]?\(?[0-9]{1,4}\)?){2,5}`)
+
+func isPhoneSep(c byte) bool { return c == ' ' || c == '.' || c == '-' }
+
+// nextPhone returns the leftmost candidate starting at or after pos.
+func nextPhone(s string, pos int) (start, end int, ok bool) {
+	for i := pos; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '+':
+			if loc := phoneIntlRE.FindStringIndex(s[i:]); loc != nil {
+				return i, i + loc[1], true
+			}
+		case isDigit(c) || c == '(':
+			if e, ok := matchNANP(s, i); ok {
+				return i, e, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+// matchNANP matches `(?:1[ .\-]?)?(?:\([0-9]{3}\)|[0-9]{3})[ .\-]?[0-9]{3}[ .\-]?[0-9]{4}`
+// at s[i], preferring the country-code form, as the regex does.
+func matchNANP(s string, i int) (int, bool) {
+	if s[i] == '1' {
+		j := i + 1
+		if j < len(s) && isPhoneSep(s[j]) {
+			j++
+		}
+		if e, ok := nanpBody(s, j); ok {
+			return e, true
+		}
+	}
+	return nanpBody(s, i)
+}
+
+func nanpBody(s string, j int) (int, bool) {
+	digits := func(n int) bool {
+		if j+n > len(s) {
+			return false
+		}
+		for k := 0; k < n; k++ {
+			if !isDigit(s[j+k]) {
+				return false
+			}
+		}
+		j += n
+		return true
+	}
+	if j < len(s) && s[j] == '(' {
+		j++
+		if !digits(3) || j >= len(s) || s[j] != ')' {
+			return 0, false
+		}
+		j++
+	} else if !digits(3) {
+		return 0, false
+	}
+	if j < len(s) && isPhoneSep(s[j]) {
+		j++
+	}
+	if !digits(3) {
+		return 0, false
+	}
+	if j < len(s) && isPhoneSep(s[j]) {
+		j++
+	}
+	if !digits(4) {
+		return 0, false
+	}
+	return j, true
+}
 
 func findPhones(s string) []Match {
 	var out []Match
@@ -16,11 +92,10 @@ func findPhones(s string) []Match {
 	// optional "1" country code glued to a preceding digit group), so retry from
 	// the next byte instead of skipping the whole candidate.
 	for pos := 0; pos < len(s); {
-		r := phoneRE.FindStringIndex(s[pos:])
-		if r == nil {
+		start, end, ok := nextPhone(s, pos)
+		if !ok {
 			break
 		}
-		start, end := pos+r[0], pos+r[1]
 		if e, ok := acceptPhone(s, start, end); ok {
 			out = append(out, Match{Kind: Phone, Start: start, End: e})
 			pos = e

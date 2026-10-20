@@ -5,31 +5,77 @@ import (
 	"sort"
 )
 
-// Separated form: AAA-GG-SSSS or AAA GG SSSS with the same separator twice.
-var ssnRE = regexp.MustCompile(`\b[0-9]{3}[- ][0-9]{2}[- ][0-9]{4}\b`)
-
 // Bare nine digits are far too common (order numbers, zip+4 without hyphen),
 // so they count only right after a context word.
 var ssnContextRE = regexp.MustCompile(
 	`(?i)\b(?:ssn|social security(?: number| no\.?| #)?)[ :#\-]{0,3}([0-9]{9})\b`)
 
-func findSSNs(s string) []Match {
-	var out []Match
-	for _, r := range ssnRE.FindAllStringIndex(s, -1) {
-		if s[r[0]+3] != s[r[0]+6] || hyphenJoined(s, r[0], r[1]) {
-			continue
-		}
-		if validSSN(s[r[0]:r[0]+3], s[r[0]+4:r[0]+6], s[r[0]+7:r[1]]) {
-			out = append(out, Match{Kind: SSN, Start: r[0], End: r[1]})
+func isSSNSep(c byte) bool { return c == '-' || c == ' ' }
+
+// separatedSSN reports whether s[i:i+11] has the shape AAA-GG-SSSS (hyphen or
+// space, either may differ here; findSSNs requires them equal) with word
+// boundaries on both sides: the regex `\b[0-9]{3}[- ][0-9]{2}[- ][0-9]{4}\b`.
+func separatedSSN(s string, i int) bool {
+	if i+11 > len(s) || (i > 0 && isWord(s[i-1])) || (i+11 < len(s) && isWord(s[i+11])) {
+		return false
+	}
+	for k := 0; k < 11; k++ {
+		c := s[i+k]
+		switch k {
+		case 3, 6:
+			if !isSSNSep(c) {
+				return false
+			}
+		default:
+			if !isDigit(c) {
+				return false
+			}
 		}
 	}
-	for _, r := range ssnContextRE.FindAllStringSubmatchIndex(s, -1) {
-		a, b := r[2], r[3]
-		if validSSN(s[a:a+3], s[a+3:a+5], s[a+5:b]) {
-			out = append(out, Match{Kind: SSN, Start: a, End: b})
+	return true
+}
+
+func findSSNs(s string) []Match {
+	var out []Match
+	for i := 0; i+11 <= len(s); i++ {
+		if !isDigit(s[i]) || !separatedSSN(s, i) {
+			continue
+		}
+		end := i + 11
+		if s[i+3] == s[i+6] && !hyphenJoined(s, i, end) && validSSN(s[i:i+3], s[i+4:i+6], s[i+7:end]) {
+			out = append(out, Match{Kind: SSN, Start: i, End: end})
+		}
+		i = end - 1 // a regex match is consumed whether or not it validates
+	}
+	if containsFold(s, "ssn") || containsFold(s, "social") {
+		for _, r := range ssnContextRE.FindAllStringSubmatchIndex(s, -1) {
+			a, b := r[2], r[3]
+			if validSSN(s[a:a+3], s[a+3:a+5], s[a+5:b]) {
+				out = append(out, Match{Kind: SSN, Start: a, End: b})
+			}
 		}
 	}
 	return sortedUnique(out)
+}
+
+// containsFold reports whether s contains the lowercase ASCII word w, ignoring case.
+func containsFold(s, w string) bool {
+	for i := 0; i+len(w) <= len(s); i++ {
+		j := 0
+		for ; j < len(w); j++ {
+			c := s[i+j]
+			if c >= 'A' && c <= 'Z' {
+				c += 'a' - 'A'
+			}
+			if c != w[j] {
+				break
+			}
+		}
+		if j == len(w) {
+			return true
+		}
+	}
+	return false
 }
 
 // validSSN applies the structural rules for numbers the SSA issues: area is

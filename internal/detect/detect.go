@@ -3,7 +3,11 @@
 // use and for fuzzing.
 //
 // Go's regexp is RE2: linear time, no lookaround. Boundary checks that would
-// need lookbehind are done in code after the regex finds a candidate.
+// need lookbehind are done in code. The hot scanners (email, card runs, SSN,
+// phone, IBAN) are hand-written because profiling showed the regex backtracker
+// was most of the cost of masking a prompt; ref_test.go keeps the original
+// regex versions and a differential fuzz test checks the scanners agree with
+// them on every input.
 package detect
 
 import "sort"

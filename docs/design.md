@@ -44,7 +44,18 @@ network.
 ## Detection
 
 Go's `regexp` is RE2: linear time, no lookaround. Each detector therefore finds
-a candidate with a regex, then checks boundaries and validity in code.
+a candidate, then checks boundaries and validity in code.
+
+Profiling a prompt with a few dozen PII values showed the regex backtracker was
+most of the cost (about 200 microseconds per 1.8 KB). The email, card, SSN, phone
+and IBAN scanners are therefore written by hand (email is anchored on `@`, the rest
+walk the bytes), and a one-pass profile (digit count, `@`, capitals) skips
+detectors that cannot match: prose scans at over 1 GB/s and PII-dense text at about
+80 MB/s. The original regex versions live in `internal/detect/ref_test.go`, and a
+differential test plus a fuzz target (`FuzzFastScannersMatchReference`) assert the
+hand-written scanners return exactly the same matches. A correctness bug found
+along the way (the card detector claiming numeric IBANs) shows why the reference
+is worth keeping.
 
 | Kind | Candidate | Validation |
 |---|---|---|
