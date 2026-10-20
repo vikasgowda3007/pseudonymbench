@@ -38,6 +38,7 @@ func run() error {
 		upstream  = flag.String("upstream", env("PSEUDONYMBENCH_UPSTREAM", "https://api.openai.com"), "upstream API base URL")
 		vaultKind = flag.String("vault", env("PSEUDONYMBENCH_VAULT", "memory"), "token vault: memory or redis")
 		redisURL  = flag.String("redis-url", env("PSEUDONYMBENCH_REDIS_URL", "redis://localhost:6379/0"), "Redis URL when -vault=redis")
+		redisLua  = flag.Bool("redis-lua", false, "allocate tokens with a Lua script instead of HSETNX (fewer round trips on a new value)")
 		ttl       = flag.Duration("ttl", 15*time.Minute, "vault session lifetime, refreshed on each masked request")
 		policy    = flag.String("policy", env("PSEUDONYMBENCH_POLICY", ""), "per-kind actions, e.g. CARD=block,PHONE=off (kinds: CARD IBAN EMAIL SSN PHONE)")
 		allowURLs = flag.Bool("allow-urls", false, "restore tokens that appear inside URLs (off by default: exfiltration risk)")
@@ -77,7 +78,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		v, err = vault.NewRedis(vault.RedisOptions{Client: redis.NewClient(opts), Sealer: sealer, IndexKey: keys.Index, TTL: *ttl})
+		v, err = vault.NewRedis(vault.RedisOptions{Client: redis.NewClient(opts), Sealer: sealer, IndexKey: keys.Index, TTL: *ttl, Lua: *redisLua})
 		if err != nil {
 			return err
 		}

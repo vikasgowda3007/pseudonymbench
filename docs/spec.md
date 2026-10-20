@@ -72,11 +72,11 @@ Cut from the original plan: Presidio sidecar in the proxy, format-preserving tok
 
 ## Open items
 
-- Not built from the research notes: a Lua versus `HSETNX` allocation benchmark axis (section 6.1 suggested measuring it rather than assuming), and a type-confusion matrix in the scorer (section 7.2).
+- Built since v1: a Lua allocation mode (`-redis-lua`) and a real-Redis benchmark comparing it with `HSETNX`; a type-confusion matrix in the scorer. Their measured results need the Docker-backed Redis (see Status).
 - Run the Redis, LiteLLM and Presidio rows on a host with Docker; pin image digests and publish configs next to the numbers.
 - Re-run overhead on a quiet Linux host with pinned CPUs and at more than one rate; collect enough samples for p99.9.
-- Whether k6 (or another tool) can measure SSE TTFT natively is still unverified. If so, the custom load client could be dropped.
+- k6 has no native SSE support (community extension xk6-sse exists; the core request was closed as not planned), so the custom load client stays. See `research/recheck-2026-10-20.md`.
 - Whether LiteLLM still buffers the whole stream on the version benchmarked.
 - ISO/IEC 7812-1 (card), ISO 13616 (IBAN) and the SSA randomization pages returned 403 during research. Checksum rules rest on Presidio's implementation, POMS RM 10201.035, and public issuer documentation.
-- Gap-check claims come from the default branch of shallow clones; re-run before publishing a "nobody does this" sentence.
+- Gap-check claims were re-checked on 2026-10-20 (`research/recheck-2026-10-20.md`): unchanged, and one competitor's own docs say no TTFT comparison has been published. The sample is still about a dozen repos.
 - Pick a licence.

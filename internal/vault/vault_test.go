@@ -54,10 +54,12 @@ func memoryBackend() backend {
 	}
 }
 
-func redisBackend() backend {
+func redisBackend() backend { return redisBackendMode("redis", false) }
+
+func redisBackendMode(name string, lua bool) backend {
 	var mr *miniredis.Miniredis
 	return backend{
-		name: "redis",
+		name: name,
 		make: func(t *testing.T, ttl time.Duration, nt func(detect.Kind) string) (Vault, func(time.Duration)) {
 			mr = miniredis.RunT(t)
 			sealer, err := NewSealer(GenerateKey())
@@ -66,7 +68,7 @@ func redisBackend() backend {
 			}
 			v, err := NewRedis(RedisOptions{
 				Client: redis.NewClient(&redis.Options{Addr: mr.Addr()}), Sealer: sealer,
-				IndexKey: GenerateKey(), TTL: ttl, MaxPerSession: 5, newToken: nt,
+				IndexKey: GenerateKey(), TTL: ttl, MaxPerSession: 5, newToken: nt, Lua: lua,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -93,7 +95,7 @@ func redisBackend() backend {
 }
 
 func eachBackend(t *testing.T, f func(t *testing.T, b backend)) {
-	for _, b := range []backend{memoryBackend(), redisBackend()} {
+	for _, b := range []backend{memoryBackend(), redisBackend(), redisBackendMode("redis-lua", true)} {
 		t.Run(b.name, func(t *testing.T) { f(t, b) })
 	}
 }

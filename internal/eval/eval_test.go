@@ -290,3 +290,33 @@ func TestPresidioRegionsReportsErrors(t *testing.T) {
 		t.Error("a 500 from the analyzer should count as an error")
 	}
 }
+
+func TestConfusionMatrix(t *testing.T) {
+	samples := []synth.Sample{
+		{Text: "a@b.co 415-555-2671 078-05-1120 4111", Spans: []synth.Span{
+			{Kind: detect.Email, Start: 0, End: 6},   // called EMAIL
+			{Kind: detect.Phone, Start: 7, End: 19},  // called SSN: a type confusion
+			{Kind: detect.SSN, Start: 20, End: 31},   // changed, placeholder not recognised
+			{Kind: detect.Card, Start: 32, End: 36}}, // missed
+		},
+	}
+	preds := [][]Region{{
+		{Start: 0, End: 6, Kinds: []detect.Kind{detect.Email}, Replaced: 1},
+		{Start: 7, End: 19, Kinds: []detect.Kind{detect.SSN}, Replaced: 1},
+		{Start: 20, End: 31, Replaced: 1},
+	}}
+	rep := Score("x", samples, preds, nil)
+	c := rep.Confusion
+	if c[detect.Email]["EMAIL"] != 1 || c[detect.Phone]["SSN"] != 1 || c[detect.SSN]["UNTYPED"] != 1 || c[detect.Card]["MISSED"] != 1 {
+		t.Errorf("confusion = %v", c)
+	}
+	md := rep.Markdown()
+	if !strings.Contains(md, "gold \\ called") || !strings.Contains(md, "| PHONE |") {
+		t.Errorf("markdown lacks the matrix:\n%s", md)
+	}
+	// A report with no confusion prints no matrix.
+	clean := Score("x", samples[:0], nil, nil)
+	if strings.Contains(clean.Markdown(), "gold \\ called") {
+		t.Error("matrix printed with nothing to show")
+	}
+}

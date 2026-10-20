@@ -79,6 +79,9 @@ type Report struct {
 	Samples int                       `json:"samples"`
 	Errors  int                       `json:"errors"` // samples the masker rejected or that could not be scored
 	Kinds   map[detect.Kind]KindScore `json:"kinds"`
+	// Confusion[gold][called] counts gold spans by what the masker called them:
+	// a kind, "UNTYPED" (changed, placeholder not recognised) or "MISSED".
+	Confusion map[detect.Kind]map[string]int `json:"confusion"`
 
 	// Overall counts every changed region, typed or not.
 	Neutral         int     `json:"neutral_regions"` // replacements that only touched out-of-scope PII
@@ -93,7 +96,7 @@ type Report struct {
 // Score compares gold labels with what a masker changed. preds[i] are the
 // changed regions of samples[i]; a nil entry with errs[i] set counts as an error.
 func Score(label string, samples []synth.Sample, preds [][]Region, errs []bool) Report {
-	rep := Report{Label: label, Kinds: map[detect.Kind]KindScore{}}
+	rep := Report{Label: label, Kinds: map[detect.Kind]KindScore{}, Confusion: map[detect.Kind]map[string]int{}}
 	for _, k := range detect.Kinds {
 		rep.Kinds[k] = KindScore{}
 	}
@@ -128,6 +131,7 @@ func Score(label string, samples []synth.Sample, preds [][]Region, errs []bool) 
 					break
 				}
 			}
+			rep.confuse(g, regions)
 			ks.GoldChars += g.End - g.Start
 			for _, r := range regions {
 				if overlaps(r.Start, r.End, g.Start, g.End) {
@@ -177,6 +181,35 @@ func Score(label string, samples []synth.Sample, preds [][]Region, errs []bool) 
 	rep.PrecisionAll = ratio(rep.RegionsTP, rep.Regions)
 	rep.CleanFPRate = ratio(rep.CleanWithRegion, rep.CleanSamples)
 	return rep
+}
+
+// confuse records what the masker called gold span g: the kind of the region
+// that overlaps it most (preferring a region that includes g's own kind),
+// "UNTYPED" if the region's placeholder was not recognised, or "MISSED".
+func (r *Report) confuse(g synth.Span, regions []Region) {
+	called, best := "MISSED", 0
+	for _, reg := range regions {
+		ov := min(reg.End, g.End) - max(reg.Start, g.Start)
+		if ov <= best {
+			continue
+		}
+		best = ov
+		switch {
+		case len(reg.Kinds) == 0:
+			called = "UNTYPED"
+		default:
+			called = string(reg.Kinds[0])
+			for _, k := range reg.Kinds {
+				if k == g.Kind {
+					called = string(k)
+				}
+			}
+		}
+	}
+	if r.Confusion[g.Kind] == nil {
+		r.Confusion[g.Kind] = map[string]int{}
+	}
+	r.Confusion[g.Kind][called]++
 }
 
 // goldTouched counts, per kind, the gold spans a region overlaps.
@@ -237,11 +270,57 @@ func (r Report) Markdown() string {
 		}
 		fmt.Fprintf(&sb, "| %s | %d | %s | %s | %s | %d | %s | %s |\n", k, ks.Gold, rec, recx, leak, ks.Predicted, prec, f2)
 	}
+	if conf := r.confusionMarkdown(kinds); conf != "" {
+		sb.WriteString("\nWhat the masker called each gold span (rows: gold kind):\n\n" + conf)
+	}
 	fmt.Fprintf(&sb, "\nOverall precision (any changed region overlapping a gold span): %.3f over %d replacements. ", r.PrecisionAll, r.Regions)
 	fmt.Fprintf(&sb, "Clean text (no PII): %d of %d samples had something masked (%.1f%%).", r.CleanWithRegion, r.CleanSamples, 100*r.CleanFPRate)
 	if r.Neutral > 0 {
 		fmt.Fprintf(&sb, " %d further replacements touched only out-of-scope PII (names, addresses, ...) and are not counted.", r.Neutral)
 	}
 	sb.WriteString("\n")
+	return sb.String()
+}
+
+// confusionMarkdown renders the confusion matrix, or "" if every gold span was
+// either called its own kind or missed (nothing was confused for anything else).
+func (r Report) confusionMarkdown(kinds []detect.Kind) string {
+	cols := []string{}
+	for _, k := range kinds {
+		cols = append(cols, string(k))
+	}
+	cols = append(cols, "UNTYPED", "MISSED")
+	confused := false
+	for gold, row := range r.Confusion {
+		for called, n := range row {
+			if n > 0 && called != string(gold) && called != "MISSED" {
+				confused = true
+			}
+		}
+	}
+	if !confused {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("| gold \\ called |")
+	for _, c := range cols {
+		sb.WriteString(" " + c + " |")
+	}
+	sb.WriteString("\n|---|" + strings.Repeat("---:|", len(cols)) + "\n")
+	for _, g := range kinds {
+		row := r.Confusion[g]
+		total := 0
+		for _, n := range row {
+			total += n
+		}
+		if total == 0 {
+			continue
+		}
+		fmt.Fprintf(&sb, "| %s |", g)
+		for _, c := range cols {
+			fmt.Fprintf(&sb, " %d |", row[c])
+		}
+		sb.WriteString("\n")
+	}
 	return sb.String()
 }

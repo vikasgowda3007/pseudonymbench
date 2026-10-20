@@ -21,6 +21,12 @@ type RedisOptions struct {
 
 	MaxPerSession int // distinct values per session; default 10000
 
+	// Lua allocates tokens with one server-side script instead of the
+	// HSETNX sequence. It saves round trips on a new value (one instead of
+	// two to three) at the price of running code inside the Redis server.
+	// Both modes are tested against the same contract; pick by measurement.
+	Lua bool
+
 	newToken func(detect.Kind) string
 }
 
@@ -63,6 +69,9 @@ func (r *Redis) keys(sid string) (t2v, v2t string) {
 func (r *Redis) Tokenize(ctx context.Context, sid string, kind detect.Kind, value string) (string, error) {
 	t2v, v2t := r.keys(sid)
 	idx := valueIndex(r.o.IndexKey, kind, value)
+	if r.o.Lua {
+		return r.tokenizeLua(ctx, sid, kind, value, t2v, v2t, idx)
+	}
 
 	// One round trip for the common case: look up and refresh the TTL.
 	pipe := r.o.Client.Pipeline()
@@ -140,3 +149,55 @@ func (r *Redis) Forget(ctx context.Context, sid string) error {
 }
 
 func (r *Redis) Close() error { return r.o.Client.Close() }
+
+// allocScript is get-or-create for a (session, value) pair, run atomically by
+// the server. KEYS: t2v, v2t. ARGV: value index, candidate token, sealed value,
+// TTL in seconds, session cap. It returns {status, token}: 0 created, 1 existing,
+// 2 session full, 3 candidate token already in use.
+var allocScript = redis.NewScript(`
+local existing = redis.call('HGET', KEYS[2], ARGV[1])
+if existing then
+  redis.call('EXPIRE', KEYS[1], ARGV[4])
+  redis.call('EXPIRE', KEYS[2], ARGV[4])
+  return {1, existing}
+end
+if redis.call('HLEN', KEYS[2]) >= tonumber(ARGV[5]) then
+  return {2, ''}
+end
+if redis.call('HEXISTS', KEYS[1], ARGV[2]) == 1 then
+  return {3, ''}
+end
+redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+redis.call('HSET', KEYS[2], ARGV[1], ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[4])
+redis.call('EXPIRE', KEYS[2], ARGV[4])
+return {0, ARGV[2]}
+`)
+
+func (r *Redis) tokenizeLua(ctx context.Context, sid string, kind detect.Kind, value, t2v, v2t, idx string) (string, error) {
+	ttl := int(r.o.TTL.Seconds())
+	if ttl < 1 {
+		ttl = 1
+	}
+	for i := 0; i < maxAllocAttempts; i++ {
+		tok := r.o.newToken(kind)
+		res, err := allocScript.Run(ctx, r.o.Client, []string{t2v, v2t},
+			idx, tok, r.o.Sealer.Seal(sid, tok, value), ttl, r.o.MaxPerSession).Slice()
+		if err != nil {
+			return "", err
+		}
+		if len(res) != 2 {
+			return "", errors.New("vault: unexpected script reply")
+		}
+		code, _ := res[0].(int64)
+		switch code {
+		case 0, 1:
+			got, _ := res[1].(string)
+			return got, nil
+		case 2:
+			return "", ErrSessionFull
+		}
+		// 3: the candidate token exists in this session; try another
+	}
+	return "", errTokenSpace
+}
