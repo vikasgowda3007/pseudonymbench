@@ -1,26 +1,39 @@
-# UNTESTED TEMPLATE (see config.yaml). Pin image digests before measuring.
+# Rival stack: LiteLLM with its Presidio guardrail, and this proxy in a container
+# so both sit behind the same Docker Desktop network path.
 #
-#   docker compose -f bench/rivals/litellm/docker-compose.yml up
-#   RIVALS="litellm=http://localhost:4000/v1/chat/completions" scripts/eval.sh
+#   go run ./cmd/mockupstream -listen :19000 &          # the upstream, on the host
+#   export PSEUDONYMBENCH_KEY=$(openssl rand -hex 32)
+#   docker compose -f bench/rivals/litellm/docker-compose.yml up -d --build
+#   scripts/rivals.sh
 #
-# scripts/eval.sh expects the rival's upstream to be the mock on host port 19001
-# (-first-token 0 for evaluation); for scripts/bench.sh use the timed mock on 19000.
+# Containers reach the mock on the host as host.docker.internal:19000.
+# Pin image digests (see scripts/rivals.sh output) before publishing numbers.
 services:
-  mock:
-    build: { context: ../../.., target: mockupstream }
-    command: ["-listen", ":9000", "-first-token", "150ms", "-token-delay", "25ms"]
-    ports: ["19000:9000"]
   presidio-analyzer:
-    image: ghcr.io/data-privacy-stack/presidio-analyzer:latest   # pin a digest
+    image: ghcr.io/data-privacy-stack/presidio-analyzer:latest
+    ports: ["5002:3000"]
+
   presidio-anonymizer:
-    image: ghcr.io/data-privacy-stack/presidio-anonymizer:latest # pin a digest
+    image: ghcr.io/data-privacy-stack/presidio-anonymizer:latest
+    ports: ["5001:3000"]
+
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable                    # pin a version
+    image: ghcr.io/berriai/litellm:main-stable
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes: ["./config.yaml:/app/config.yaml:ro"]
     environment:
       PRESIDIO_ANALYZER_API_BASE: http://presidio-analyzer:3000
       PRESIDIO_ANONYMIZER_API_BASE: http://presidio-anonymizer:3000
       LITELLM_MASTER_KEY: sk-bench
+    extra_hosts: ["host.docker.internal:host-gateway"]
     ports: ["4000:4000"]
-    depends_on: [mock, presidio-analyzer, presidio-anonymizer]
+    depends_on: [presidio-analyzer, presidio-anonymizer]
+
+  pseudonymbench:
+    build: { context: ../../.., target: pseudonymbench }
+    environment:
+      PSEUDONYMBENCH_KEY: ${PSEUDONYMBENCH_KEY:?set PSEUDONYMBENCH_KEY}
+      PSEUDONYMBENCH_UPSTREAM: http://host.docker.internal:19000
+      PSEUDONYMBENCH_AUDIT: "off"
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["18083:8080"]

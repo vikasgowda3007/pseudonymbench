@@ -33,7 +33,7 @@ Claim wording: "In the repos I inspected on 2026-10-19, none published this comb
 | API surface | OpenAI chat-completions only, stream and non-stream | Each other SSE dialect (Anthropic, Responses API) is a separate bug class. Other paths return 403 rather than being forwarded unscanned. |
 | Detection | Regex tier: email, phone, SSN/ITIN-shaped, card (Luhn + issuer table), IBAN (mod-97) | A measured baseline first. Names and addresses need NER. |
 | Token | `<KIND_xxxxxxxx>`, 32 random bits | Random (reveals nothing), typed, bounded length. The first draft said 4 hex digits; the research shows 16 bits collides at ~100 values per session. |
-| Vault | Interface; memory and Redis; AES-256-GCM with session+token as AAD; HMAC value index; no Lua | `HSETNX` is enough for random tokens. |
+| Vault | Interface; memory and Redis; AES-256-GCM with session+token as AAD; HMAC value index; Lua allocation by default, `HSETNX` fallback | `HSETNX` is enough for correctness; the script measured 2.6x faster per new value. The first draft said no Lua; measurement changed it. |
 | Failure mode | Fail closed | An unscannable body is rejected, never forwarded. |
 | Exfiltration | Tokens inside URLs are not restored (best effort) | OWASP LLM01 image-link scenario. |
 | Metrics | recall (overlap, exact), bytes left visible, typed precision, F2, clean-text false-positive rate | Per research section 7.2. |

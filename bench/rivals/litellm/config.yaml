@@ -7,10 +7,15 @@
 # Goal: LiteLLM proxy with its Presidio guardrail in front of the mock upstream,
 # configured to mask on the way in and restore on the way out.
 model_list:
-  - model_name: mock-model
+  - model_name: mock-model              # used by loadgen
     litellm_params:
       model: openai/mock-model
-      api_base: http://mock:9000/v1        # cmd/mockupstream
+      api_base: http://host.docker.internal:19000/v1   # cmd/mockupstream on the host
+      api_key: sk-mock
+  - model_name: eval-model              # used by eval
+    litellm_params:
+      model: openai/mock-model
+      api_base: http://host.docker.internal:19000/v1
       api_key: sk-mock
 
 guardrails:

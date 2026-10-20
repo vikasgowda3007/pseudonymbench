@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/vikasgowda3007/pseudonymbench/internal/detect"
 	"github.com/vikasgowda3007/pseudonymbench/internal/jsonx"
@@ -380,5 +383,77 @@ func TestRestoreArgumentsWithEscapedBrackets(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "john@acme.com") {
 		t.Errorf("escaped token not restored: %s", out)
+	}
+}
+
+// slowRemote wraps a vault so every call takes a fixed time, as a network
+// round trip would, and records how many calls ran at once.
+type slowRemote struct {
+	vault.Vault
+	delay   time.Duration
+	mu      sync.Mutex
+	now     int
+	maxSeen int
+}
+
+func (s *slowRemote) Remote() bool { return true }
+
+func (s *slowRemote) Tokenize(ctx context.Context, sid string, kind detect.Kind, value string) (string, error) {
+	s.mu.Lock()
+	s.now++
+	s.maxSeen = max(s.maxSeen, s.now)
+	s.mu.Unlock()
+	time.Sleep(s.delay)
+	s.mu.Lock()
+	s.now--
+	s.mu.Unlock()
+	return s.Vault.Tokenize(ctx, sid, kind, value)
+}
+
+// Against a remote vault, a request with many values must not pay one round
+// trip per value.
+func TestRemoteVaultIsPrefetchedConcurrently(t *testing.T) {
+	sr := &slowRemote{Vault: vault.NewMemory(vault.MemoryOptions{}), delay: 20 * time.Millisecond}
+	sess := NewSession(sr, "s1")
+	var content strings.Builder
+	for i := 0; i < 24; i++ {
+		fmt.Fprintf(&content, "mail user%d@acme.com ", i)
+	}
+	body := `{"messages":[{"role":"user","content":"` + content.String() + `"}]}`
+
+	start := time.Now()
+	out, rep, err := New(nil).Request(ctx, sess, []byte(body))
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Masked[detect.Email] != 24 || strings.Contains(string(out), "@acme.com") {
+		t.Fatalf("masking incomplete: %v\n%s", rep.Masked, out)
+	}
+	// Sequentially this takes 24 x 20 ms = 480 ms; with 16 at a time, about 40 ms.
+	if elapsed > 250*time.Millisecond {
+		t.Errorf("took %v: values were allocated one at a time", elapsed)
+	}
+	if sr.maxSeen < 8 {
+		t.Errorf("at most %d vault calls ran at once", sr.maxSeen)
+	}
+	if sr.maxSeen > maxPrefetch {
+		t.Errorf("%d calls at once exceeds the cap of %d", sr.maxSeen, maxPrefetch)
+	}
+	// Every token restores to the right value.
+	for _, tok := range token.Pattern.FindAllString(string(out), -1) {
+		if v, ok, _ := sess.Restore(ctx, tok); !ok || !strings.HasSuffix(v, "@acme.com") {
+			t.Errorf("token %s restores %q (%v)", tok, v, ok)
+		}
+	}
+}
+
+func TestPrefetchFailsClosed(t *testing.T) {
+	v := vault.NewMemory(vault.MemoryOptions{MaxPerSession: 3})
+	sr := &slowRemote{Vault: v, delay: time.Millisecond}
+	_, _, err := New(nil).Request(ctx, NewSession(sr, "s1"),
+		[]byte(`{"messages":[{"role":"user","content":"a@x.co b@x.co c@x.co d@x.co e@x.co"}]}`))
+	if !errors.Is(err, vault.ErrSessionFull) {
+		t.Fatalf("err = %v, want ErrSessionFull", err)
 	}
 }

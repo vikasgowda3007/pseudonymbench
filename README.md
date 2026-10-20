@@ -12,7 +12,7 @@ All of these are reproducible from this repo; commands are under [Reproduce](#re
 
 ### What the proxy costs
 
-Added latency against going straight to the upstream, at 100 requests/s open-loop, 3,000 requests per cell (30 s after a 4 s warmup). The mock upstream waits 150 ms (prefill), then streams a 960-byte reply as 240 chunks 12 ms apart, so a completion takes about 3 s. Apple M4, 16 GB, macOS, Go 1.26.3; generator, proxy and mock share the machine and no run used Docker, so treat this as a laptop result, not a benchmark of record. In-memory vault; the Redis row has not been run.
+Added latency against going straight to the upstream, at 100 requests/s open-loop, 3,000 requests per cell (30 s after a 4 s warmup). The mock upstream waits 150 ms (prefill), then streams a 960-byte reply as 240 chunks 12 ms apart, so a completion takes about 3 s. Apple M4, 16 GB, macOS, Go 1.26.3; generator, proxy and mock share the machine and no run used Docker, so treat this as a laptop result, not a benchmark of record. In-memory vault in the first table; Redis in the second.
 
 <!-- overhead:start -->
 | payload | JSON: added p50 (ms) | JSON: added p99 (ms) | stream: added TTFT p50 (ms) | stream: added TTFT p99 (ms) | baseline TTFT p50 / p99 (ms) | noise floor: JSON p50 / p99, TTFT p50 / p99 (ms) |
@@ -28,6 +28,16 @@ What this says:
 - **The `plain` row is worse than the PII rows, which is backwards.** Its median gap (+1.4 ms) is inside the noise of that cell pair (the repeat baseline was 1.1 ms slower than the first). Its p99 gap (+6.9 ms) is larger than that pair's noise floor (1.9 ms), and I have not found a cause: the same cell showed +0.9 ms and +0.8 ms in two earlier full runs, so it looks like a one-off tail event on a shared laptop, but a quiet host and more samples are needed to say.
 - **Streams are compared on time to first token only.** The total duration of a 240-chunk stream varies by up to 25 ms between two identical baseline runs on this machine (timer jitter accumulates over 240 sleeps), which is larger than any effect being measured. The full table with those columns is in [`results/laptop-3/REPORT.md`](results/laptop-3/REPORT.md).
 - Detection itself is cheap: `go test -bench` measures about 1.4 µs for 2 KB of prose and about 22 µs for 1.8 KB containing 40 PII values. The rest of the half millisecond (the extra network hop, JSON decode and encode, the vault) is not broken down here.
+
+
+**With Redis as the vault** (Redis 7.4.11 in Docker Desktop on the same laptop, so each vault round trip also crosses the VM's port forward, about 100 µs; proxy, mock and load generator still run natively; 2,500 requests per cell; `results/redis-2/`):
+
+| payload | memory vault: JSON p50 / p99, TTFT p50 / p99 (ms) | Redis, Lua allocation (default) | Redis, `HSETNX` sequence |
+|---|---|---|---|
+| pii (5 values) | +0.4 / +0.9, +0.4 / +1.4 | +1.5 / +1.9, +1.8 / +2.1 | +2.5 / +3.4, +2.8 / +3.2 |
+| pii-long (about 20 values) | +0.6 / +1.2, +0.6 / +0.4 | +3.3 / +4.9, +3.6 / +3.0 | +3.2 / +3.9, +4.8 / +5.2 |
+
+A remote vault costs a millisecond or two on this setup, and it grows with the number of distinct values in a request. In isolation (`BenchmarkRequestRedis`, masking one request, including the cleanup round trip) the Lua script takes 0.34 ms for the 5-value payload against 0.73 ms for the `HSETNX` sequence, and 0.94 ms against 2.1 ms for the 20-value payload; end to end the two are tied for `pii-long` JSON (3.3 against 3.2 ms) and Lua is ahead everywhere else. A request's tokens are allocated concurrently (up to 16 at once) rather than one round trip per value; before that change the `HSETNX` row for `pii-long` was +5.5 ms at p50. Allocating all of a request's tokens in one pipelined round trip would cut it further and has not been built.
 
 Run it with `scripts/bench.sh`; `go run ./cmd/benchreport -subject pseudonymbench results/<run>/*.json` prints this table.
 <!-- overhead:end -->
@@ -133,7 +143,7 @@ sequenceDiagram
 - **Masking is default-scan.** Every string in the request is scanned except a short list of fields the API validates (`model`, `role`, function names, base64 data). Unknown fields are scanned, not skipped. Tool-call `arguments` (JSON inside a string) are parsed and scanned.
 - **The stream rewriter** holds back only a trailing piece of text that could still grow into a token (at most 15 bytes), per choice and per field, and flushes it on the finish chunk, `[DONE]`, an error frame or end of input. Ordinary prose passes through in the event it arrived in. It is tested at every split position, with random chunking, with `n>1`, with parallel tool calls, and by a fuzz target that compares chunked output to whole-text restoration.
 - **Fails closed.** Invalid JSON, a compressed body, an oversize body, an unknown path, a blocked kind or a vault error returns an error; nothing is forwarded.
-- **Vault.** In memory or Redis. Redis holds AES-256-GCM ciphertext (bound to session and token) and HMAC-keyed value hashes, never plaintext, and allocation needs no Lua script.
+- **Vault.** In memory or Redis. Redis holds AES-256-GCM ciphertext (bound to session and token) and HMAC-keyed value hashes, never plaintext, and allocates tokens with a single Lua script (or an `HSETNX` sequence with `-redis-lua=false`; measured 2.6x slower per new value). Against Redis, a request's tokens are allocated concurrently rather than one round trip per value.
 - **Audit log.** One JSON line per request: kinds, counts, timings, outcome. Never values, prompts or headers (a test greps for them).
 
 ## What it misses
@@ -200,6 +210,6 @@ A different project named `maskgate` (`tsymbaluyk/maskgate`) exists; this reposi
 
 - It is a benchmarked research tool, not production-grade software, and nothing here is a statement about legal compliance.
 - The proxy is a fully trusted component: it sees every prompt in plaintext and the `Authorization` header. Run it inside your trust boundary behind TLS.
-- Overhead numbers are from one laptop. The Redis, LiteLLM and Presidio rows have not been run (no Docker daemon was available while writing this); the code and templates exist.
+- Overhead numbers are from one laptop (Redis ran in a Docker Desktop VM on it). The LiteLLM and Presidio rows are not in this section yet; see below if they have been run.
 - Dataset: Nemotron-PII is by NVIDIA, licensed CC-BY-4.0; it is fetched on demand and not stored in this repository.
-- No licence file has been chosen yet.
+- Licensed under the Apache License 2.0; see [LICENSE](LICENSE).

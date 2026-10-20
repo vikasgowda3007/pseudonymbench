@@ -4,7 +4,7 @@
 #
 #   scripts/bench.sh                     # defaults below
 #   RATE=200 DURATION=60s scripts/bench.sh
-#   REDIS_URL=redis://localhost:6379/0 scripts/bench.sh   # adds a Redis-vault row
+#   REDIS_URL=redis://localhost:6379/0 scripts/bench.sh   # adds Redis-vault rows (HSETNX and Lua)
 #
 # Results go to results/<RUN>/ as JSON plus REPORT.md. Numbers from a laptop
 # are for checking the harness, not for publishing: see the README.
@@ -20,6 +20,7 @@ NOTE=${NOTE:-"unspecified machine"}
 MOCK_PORT=${MOCK_PORT:-19000}
 PROXY_PORT=${PROXY_PORT:-18080}
 REDIS_PROXY_PORT=${REDIS_PROXY_PORT:-18081}
+REDIS_LUA_PROXY_PORT=${REDIS_LUA_PROXY_PORT:-18082}
 # Mock model timing: 150 ms prefill, 12 ms per 4-byte chunk, 240 chunks. The reply is
 # padded to a fixed 960 bytes so it cannot differ between direct and proxied runs;
 # the mock counts replies whose echo overflowed that, and this script checks it.
@@ -51,9 +52,13 @@ wait_for "http://localhost:$MOCK_PORT/healthz"
 wait_for "http://localhost:$PROXY_PORT/healthz"
 if [[ -n "${REDIS_URL:-}" ]]; then
   ./bin/pseudonymbench -listen ":$REDIS_PROXY_PORT" -upstream "http://localhost:$MOCK_PORT" -audit off \
-    -vault redis -redis-url "$REDIS_URL" >"$OUT/proxy-redis.log" 2>&1 &
+    -vault redis -redis-url "$REDIS_URL" -redis-lua=false >"$OUT/proxy-redis.log" 2>&1 &
   pids+=($!)
   wait_for "http://localhost:$REDIS_PROXY_PORT/healthz"
+  ./bin/pseudonymbench -listen ":$REDIS_LUA_PROXY_PORT" -upstream "http://localhost:$MOCK_PORT" -audit off \
+    -vault redis -redis-url "$REDIS_URL" -redis-lua=true >"$OUT/proxy-redis-lua.log" 2>&1 &
+  pids+=($!)
+  wait_for "http://localhost:$REDIS_LUA_PROXY_PORT/healthz"
 fi
 
 run() { # label url payload stream
@@ -68,7 +73,10 @@ for payload in $PAYLOADS; do
   for stream in false true; do
     run direct          "http://localhost:$MOCK_PORT"  "$payload" "$stream"
     run pseudonymbench  "http://localhost:$PROXY_PORT" "$payload" "$stream"
-    [[ -n "${REDIS_URL:-}" ]] && run pseudonymbench-redis "http://localhost:$REDIS_PROXY_PORT" "$payload" "$stream"
+    if [[ -n "${REDIS_URL:-}" ]]; then
+      run pseudonymbench-redis-hsetnx "http://localhost:$REDIS_PROXY_PORT"      "$payload" "$stream"
+      run pseudonymbench-redis-lua "http://localhost:$REDIS_LUA_PROXY_PORT"  "$payload" "$stream"
+    fi
     # A second baseline run: its delta against the first is the noise floor.
     run direct-repeat   "http://localhost:$MOCK_PORT"  "$payload" "$stream"
   done

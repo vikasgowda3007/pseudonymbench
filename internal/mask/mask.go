@@ -112,6 +112,13 @@ func (m *Masker) Request(ctx context.Context, sess *Session, body []byte) ([]byt
 	if !ok {
 		return nil, Report{}, ErrInvalidBody
 	}
+	if sess.Remote() {
+		// Every vault call is a network round trip. Find all the values first,
+		// allocate their tokens together, then mask from memory.
+		if err := m.prefetch(ctx, sess, body); err != nil {
+			return nil, Report{}, fmt.Errorf("mask: vault: %w", err)
+		}
+	}
 	w := &walker{ctx: ctx, m: m, sess: sess, blocked: map[detect.Kind]bool{}}
 	w.rep.Masked = map[detect.Kind]int{}
 	masked := make(map[string]any, len(top))
@@ -143,6 +150,10 @@ type walker struct {
 	sess    *Session
 	rep     Report
 	blocked map[detect.Kind]bool
+
+	// collect, when non-nil, switches the walker into a dry run: str records
+	// the values it would tokenize and returns each string unchanged.
+	collect map[valueKey]struct{}
 }
 
 func (w *walker) blockedError() error {
@@ -228,6 +239,14 @@ func (w *walker) str(s string) (string, error) {
 	if len(matches) == 0 {
 		return s, nil
 	}
+	if w.collect != nil {
+		for _, mt := range matches {
+			if w.m.policy.action(mt.Kind) != ActionBlock {
+				w.collect[valueKey{mt.Kind, mt.Value(s)}] = struct{}{}
+			}
+		}
+		return s, nil
+	}
 	var b strings.Builder
 	last := 0
 	for _, mt := range matches {
@@ -246,4 +265,39 @@ func (w *walker) str(s string) (string, error) {
 	}
 	b.WriteString(s[last:])
 	return b.String(), nil
+}
+
+// prefetch walks body without changing it, collects every distinct (kind,
+// value) that masking will tokenize, and has the session allocate them all
+// concurrently. It decodes the body separately so the real pass starts from an
+// untouched tree.
+func (m *Masker) prefetch(ctx context.Context, sess *Session, body []byte) error {
+	v, err := jsonx.Decode(body)
+	if err != nil {
+		return nil // the real pass reports the invalid body
+	}
+	top, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	w := &walker{ctx: ctx, m: m, sess: sess, blocked: map[detect.Kind]bool{}, collect: map[valueKey]struct{}{}}
+	w.rep.Masked = map[detect.Kind]int{}
+	for k, val := range top {
+		if !structuralTop[k] {
+			if _, err := w.str(k); err != nil {
+				return err
+			}
+		}
+		if _, err := w.value(val, k, structuralTop[k]); err != nil {
+			return err
+		}
+	}
+	if len(w.collect) < 2 {
+		return nil // a single value gains nothing from concurrency
+	}
+	keys := make([]valueKey, 0, len(w.collect))
+	for k := range w.collect {
+		keys = append(keys, k)
+	}
+	return sess.Prefetch(ctx, keys)
 }

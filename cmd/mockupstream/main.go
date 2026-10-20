@@ -85,6 +85,8 @@ func main() {
 	rec := newRecorder(c.keep)
 	var requests atomic.Int64
 	c.overflow = &atomic.Int64{}
+	var lastMu sync.Mutex
+	var lastBody string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
 	mux.HandleFunc("/_received/", func(w http.ResponseWriter, r *http.Request) {
@@ -97,12 +99,29 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, body)
 	})
+	// /_last returns the most recent request body. Proxies that do not forward
+	// custom headers (so X-Eval-Id never arrives) can still be evaluated by
+	// sending one request at a time and reading this back.
+	mux.HandleFunc("/_last", func(w http.ResponseWriter, r *http.Request) {
+		lastMu.Lock()
+		b := lastBody
+		lastMu.Unlock()
+		if b == "" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, b)
+	})
 	mux.HandleFunc("/_stats", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"requests":%d,"overflow":%d}`+"\n", requests.Load(), c.overflow.Load())
 	})
 	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		requests.Add(1)
+		lastMu.Lock()
+		lastBody = string(body)
+		lastMu.Unlock()
 		if id := r.Header.Get("X-Eval-Id"); id != "" {
 			rec.put(id, string(body))
 		}

@@ -6,6 +6,7 @@ checked and re-derived.
 | Directory | Script | What it holds |
 |---|---|---|
 | `laptop-3/` | `scripts/bench.sh` | Overhead matrix: JSON per run, `REPORT.md` with every column. Apple M4 laptop, no Docker, generator, proxy and mock on one machine. Not a quiet-host benchmark. |
+| `redis-2/` | `REDIS_URL=... scripts/bench.sh` | Overhead with Redis as the vault: Lua allocation and `HSETNX` rows next to the in-memory vault and the baseline. Redis 7.4.11 in Docker Desktop on the same laptop. |
 | `eval-synthetic/` | `scripts/eval.sh` | Detector-only and through-the-proxy scores on 2,000 seeded synthetic samples; request-field matrix. |
 | `eval-nemotron/` | `DATA=data/nemotron-pii.jsonl scripts/eval.sh` | The same on the first 3,000 test rows of `nvidia/Nemotron-PII` (CC-BY-4.0; the data itself is not stored here). |
 

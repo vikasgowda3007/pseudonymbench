@@ -169,12 +169,26 @@ part.
 ```
 
 Two hashes share a hash tag (`{sid}`), so they live in one Redis Cluster slot and
-expire together. Allocation needs no Lua script:
+expire together. Allocating a token for a new value can be done two ways, both
+behind the same contract tests (and, with `PSEUDONYMBENCH_TEST_REDIS` set, tested
+against a real server):
 
-1. `HGET v2t h` (pipelined with `HLEN v2t` and the TTL refresh): common case, one round trip.
-2. Otherwise generate a token and `HSETNX t2v token sealed`. If the token exists, retry.
-3. `HSETNX v2t h token`. If another request registered the same value first, adopt
-   its token and `HDEL` ours.
+- **`HSETNX` sequence** (needs no scripting; `-redis-lua=false`):
+  1. `HGET v2t h`, pipelined with `HLEN v2t` and the TTL refresh: the common case, one round trip.
+  2. Otherwise generate a token and `HSETNX t2v token sealed` plus `EXPIRE`, in one transaction. If the token exists, retry.
+  3. `HSETNX v2t h token` plus `EXPIRE`. If another request registered the same value first, adopt its token and `HDEL` ours.
+- **One Lua script** (the default): the same get-or-create, run atomically by the server in a single round trip.
+
+Measured on a real Redis 7.4.11 (Docker Desktop, so every round trip also crosses
+the VM port forward, about 100 microseconds): allocating a new value takes 313
+microseconds with the `HSETNX` sequence and 118 with the script on one goroutine,
+92 against 34 with ten in parallel. Looking up an existing value is the same either
+way. `go test ./internal/vault -bench RedisTokenize` reproduces it.
+
+A request with many values would still pay one round trip per value, so against a
+remote vault the masker first collects every distinct value (a dry run over a
+separately decoded copy of the body), asks the vault for all of their tokens at once
+with at most 16 calls in flight, and then masks from memory. Memory vaults skip this.
 
 The session cap counts `v2t` (distinct values), not `t2v`, because the orphan
 tokens that concurrent requests create for a moment must not trip it (found by a
@@ -213,7 +227,7 @@ first byte, total). No values, no prompt text, no headers.
 | Regex tier only | Presidio sidecar | A measured regex tier is the baseline; names and addresses need NER, which is its own project (model download, latency, a second service). The eval harness can score a Presidio analyzer later through the same interface. |
 | Random tokens + value index | HMAC tokens, format-preserving encryption, fake values | Random tokens leak nothing; deterministic tokens enable offline guessing of low-entropy values if the key leaks; FF3/FF3-1 are dropped from NIST's 2025 draft and fake values can collide with real text. |
 | No `hash` policy action | `hash`, `redact` | An unkeyed hash of an SSN or phone is enumerable. Actions are `mask`, `block`, `off`. |
-| No Lua | Lua, Redis Functions | `HSETNX` on two hashes is enough for random tokens. Lua would save a round trip and is a good future benchmark axis. |
+| Lua script for allocation, default on | `HSETNX` sequence, Redis Functions | `HSETNX` on two hashes is enough for correctness, but measured 2.6x slower on a new value (313 vs 118 microseconds). `-redis-lua=false` keeps the sequence for deployments that forbid scripts. Redis Functions add operational weight for no gain here. |
 | Exact-match restoration | Fuzzy matching | Fuzzy restoration can restore a value the model never saw. A changed token stays visible instead. |
 | Fail closed | Fail open | Forwarding a body the proxy could not scan defeats the purpose. |
 | OpenAI chat-completions only | Anthropic Messages, Responses API | Each is a different SSE dialect and a separate bug class. Other paths return 403 instead of being forwarded unscanned. |

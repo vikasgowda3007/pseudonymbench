@@ -148,6 +148,9 @@ func (r *Redis) Forget(ctx context.Context, sid string) error {
 	return r.o.Client.Del(ctx, t2v, v2t).Err()
 }
 
+// Remote reports that every call is a network round trip.
+func (r *Redis) Remote() bool { return true }
+
 func (r *Redis) Close() error { return r.o.Client.Close() }
 
 // allocScript is get-or-create for a (session, value) pair, run atomically by

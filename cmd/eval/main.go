@@ -102,6 +102,7 @@ func cmdProxy(args []string) error {
 	mock := fs.String("mock", "http://localhost:9000", "mock upstream base URL")
 	label := fs.String("label", "pseudonymbench", "name in the report")
 	conc := fs.Int("c", 16, "concurrent requests")
+	seq := fs.Bool("sequential", false, "one request at a time, read back via the mock's /_last (for proxies that drop custom headers)")
 	out := fs.String("out", "", "write the report JSON here")
 	var hdr headers
 	fs.Var(&hdr, "H", "extra request header 'Name: value' (repeatable), e.g. Authorization")
@@ -111,7 +112,7 @@ func cmdProxy(args []string) error {
 	if err != nil {
 		return err
 	}
-	t := eval.Target{URL: *target, MockURL: *mock, Headers: hdr.m, Concurrency: *conc}
+	t := eval.Target{URL: *target, MockURL: *mock, Headers: hdr.m, Concurrency: *conc, Sequential: *seq}
 	runID := fmt.Sprintf("p%d", time.Now().UnixNano())
 	preds, errs := eval.RunProxy(context.Background(), t, runID, samples)
 	return emit(eval.Score(*label, samples, preds, errs), *out)
@@ -146,12 +147,13 @@ func cmdFields(args []string) error {
 	target := fs.String("target", "http://localhost:8080/v1/chat/completions", "chat-completions URL of the proxy under test")
 	mock := fs.String("mock", "http://localhost:9000", "mock upstream base URL")
 	label := fs.String("label", "pseudonymbench", "name in the report")
+	seq := fs.Bool("sequential", false, "read back via the mock's /_last (for proxies that drop custom headers)")
 	out := fs.String("out", "", "write the report JSON here")
 	var hdr headers
 	fs.Var(&hdr, "H", "extra request header 'Name: value' (repeatable)")
 	fs.Parse(args)
 
-	t := eval.Target{URL: *target, MockURL: *mock, Headers: hdr.m}
+	t := eval.Target{URL: *target, MockURL: *mock, Headers: hdr.m, Sequential: *seq}
 	rep := eval.RunFields(context.Background(), t, fmt.Sprintf("f%d", time.Now().UnixNano()), *label)
 	fmt.Print(eval.FieldsMarkdown([]eval.FieldReport{rep}))
 	if *out != "" {

@@ -26,6 +26,11 @@ type Target struct {
 	Headers     map[string]string
 	Concurrency int
 	Client      *http.Client
+
+	// Sequential sends one request at a time and reads the mock's /_last
+	// instead of looking the body up by X-Eval-Id. Use it for proxies that do
+	// not forward custom request headers to their upstream.
+	Sequential bool
 }
 
 func (t Target) client() *http.Client {
@@ -58,6 +63,9 @@ func (t Target) send(ctx context.Context, id string, body []byte) (int, error) {
 // received returns what the mock upstream saw for id.
 func (t Target) received(ctx context.Context, id string) ([]byte, error) {
 	u := strings.TrimRight(t.MockURL, "/") + "/_received/" + url.PathEscape(id)
+	if t.Sequential {
+		u = strings.TrimRight(t.MockURL, "/") + "/_last"
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -110,6 +118,9 @@ func RunProxy(ctx context.Context, t Target, runID string, samples []synth.Sampl
 	preds := make([][]Region, len(samples))
 	errs := make([]bool, len(samples))
 	workers := max(t.Concurrency, 1)
+	if t.Sequential {
+		workers = 1
+	}
 	jobs := make(chan int)
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {

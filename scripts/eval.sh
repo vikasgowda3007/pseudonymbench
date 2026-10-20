@@ -8,7 +8,10 @@
 # Add rival proxies by listing "label=url" pairs in RIVALS, where url is the
 # rival's chat-completions endpoint and its upstream is already pointed at the
 # mock (default http://localhost:19001):
-#   RIVALS="litellm=http://localhost:4000/v1/chat/completions" scripts/eval.sh
+#   RIVALS="litellm=http://localhost:4000/v1/chat/completions" MOCK_PORT=19000 scripts/eval.sh
+# Rivals are driven one request at a time and read back through the mock's /_last,
+# because many proxies do not forward the X-Eval-Id header; RIVAL_AUTH sets the
+# Authorization header they need (default "Bearer sk-bench").
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -58,7 +61,8 @@ MOCK=http://localhost:$MOCK_PORT
   for pair in $RIVALS; do
     label=${pair%%=*}; url=${pair#*=}
     echo "## Through $label"
-    ./bin/eval proxy -data "$DATA" -target "$url" -mock "$MOCK" -label "$label" -out "$OUT/proxy-$label.json"
+    ./bin/eval proxy -data "$DATA" -target "$url" -mock "$MOCK" -label "$label" -sequential \
+      -H "Authorization: ${RIVAL_AUTH:-Bearer sk-bench}" -out "$OUT/proxy-$label.json"
   done
 } | tee "$OUT/EVAL.md"
 
@@ -71,7 +75,8 @@ MOCK=http://localhost:$MOCK_PORT
   fields=("$OUT/fields-pseudonymbench.json")
   for pair in $RIVALS; do
     label=${pair%%=*}; url=${pair#*=}
-    ./bin/eval fields -target "$url" -mock "$MOCK" -label "$label" -out "$OUT/fields-$label.json" >/dev/null
+    ./bin/eval fields -target "$url" -mock "$MOCK" -label "$label" -sequential \
+      -H "Authorization: ${RIVAL_AUTH:-Bearer sk-bench}" -out "$OUT/fields-$label.json" >/dev/null
     fields+=("$OUT/fields-$label.json")
   done
   ./bin/eval merge "${fields[@]}"
