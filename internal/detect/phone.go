@@ -107,14 +107,15 @@ func findPhones(s string) []Match {
 }
 
 // acceptPhone validates s[start:end]. The international pattern is greedy and
-// can run into digits that follow the number ("+1 415 555 2671 2024"), so on
-// failure it retries shorter spans that end at a separator.
+// can run into digits that follow the number ("+1 415 555 2671 2024", or a
+// parenthesised group that starts the next number), so on failure it retries
+// shorter spans that end at a separator or an opening parenthesis.
 func acceptPhone(s string, start, end int) (int, bool) {
 	if phoneBoundsOK(s, start, end) && validPhone(s[start:end]) {
 		return end, true
 	}
 	for e := end - 1; e > start; e-- {
-		if c := s[e]; c != ' ' && c != '.' && c != '-' {
+		if c := s[e]; c != ' ' && c != '.' && c != '-' && c != '(' {
 			continue
 		}
 		if p := s[e-1]; !isDigit(p) && p != ')' {
