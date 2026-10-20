@@ -3,7 +3,9 @@ package vault
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -88,4 +90,23 @@ func randomKey() []byte {
 		panic("vault: crypto/rand failed: " + err.Error())
 	}
 	return k
+}
+
+// Keys are the three independent keys the proxy derives from one master
+// secret, so a single environment variable configures everything and no key
+// is ever used for two purposes.
+type Keys struct {
+	Seal    []byte // AES-256-GCM key for vault values
+	Index   []byte // HMAC key for the value index
+	Session []byte // HMAC key that derives session ids from caller identity
+}
+
+// DeriveKeys expands master into purpose-specific keys with HMAC-SHA256.
+func DeriveKeys(master []byte) Keys {
+	d := func(label string) []byte {
+		m := hmac.New(sha256.New, master)
+		m.Write([]byte("pseudonymbench/" + label))
+		return m.Sum(nil)
+	}
+	return Keys{Seal: d("seal"), Index: d("index"), Session: d("session")}
 }
