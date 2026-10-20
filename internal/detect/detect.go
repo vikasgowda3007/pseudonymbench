@@ -20,8 +20,12 @@ const (
 )
 
 // Kinds lists every kind in resolution priority. When two candidates overlap,
-// the earlier kind wins: the checksum-validated kinds go first, phone last.
-var Kinds = []Kind{Card, IBAN, Email, SSN, Phone}
+// the earlier kind wins, most specific first: an IBAN must match a country
+// length and pass mod-97 (a random string passes about 1 time in 97), a card
+// only has to pass Luhn and an issuer prefix (about 1 in 10, then a prefix
+// table), so a numeric IBAN that happens to hold a Luhn-valid window is an
+// IBAN. Phone goes last because its shape is the loosest.
+var Kinds = []Kind{IBAN, Card, Email, SSN, Phone}
 
 // Match is a byte span of s. It carries no copy of the value, so printing or
 // logging a Match cannot leak PII.

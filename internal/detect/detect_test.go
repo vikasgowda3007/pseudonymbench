@@ -80,6 +80,7 @@ func TestFind(t *testing.T) {
 		{"iban no", "NO93 8601 1117 947", []string{"IBAN:NO93 8601 1117 947"}},
 		{"several kinds", "Email john@acme.com about card 4111 1111 1111 1111, call 415-555-2671",
 			[]string{"EMAIL:john@acme.com", "CARD:4111 1111 1111 1111", "PHONE:415-555-2671"}},
+		{"numeric iban with luhn-valid window", "ES23 4953 4145 6514 5192 4681", []string{"IBAN:ES23 4953 4145 6514 5192 4681"}},
 		{"card beats phone", "4111 1111 1111 1111", []string{"CARD:4111 1111 1111 1111"}},
 		{"iban beats phone", "DE89 3704 0044 0532 0130 00", []string{"IBAN:DE89 3704 0044 0532 0130 00"}},
 		{"plain text", "The quick brown fox jumps over 13 lazy dogs on 2026-10-19.", nil},

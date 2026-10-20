@@ -5,3 +5,4 @@ bin/
 *.prof
 coverage.out
 /results/*.tmp
+/results/smoke/
