@@ -55,6 +55,8 @@ func TestFind(t *testing.T) {
 		{"phone one prefix", "1-800-555-0199", []string{"PHONE:1-800-555-0199"}},
 		{"phone intl uk", "ring +44 20 7946 0958 please", []string{"PHONE:+44 20 7946 0958"}},
 		{"phone intl compact", "+442079460958", []string{"PHONE:+442079460958"}},
+		{"phone then trailing number", "call +1 415 555 2671 2024", []string{"PHONE:+1 415 555 2671"}},
+		{"phone after glued digit group", "4111-1111 415-555-2671 x", []string{"PHONE:415-555-2671"}},
 		{"phone epoch rejected", "ts=1729350000", nil},
 		{"phone leading zero area", "012 345 6789", nil},
 		{"phone too long", "+1234567890123456789", nil},

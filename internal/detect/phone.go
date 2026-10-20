@@ -12,20 +12,52 @@ var phoneRE = regexp.MustCompile(
 
 func findPhones(s string) []Match {
 	var out []Match
-	for _, r := range phoneRE.FindAllStringIndex(s, -1) {
-		start, end := r[0], r[1]
-		if !boundedAt(s, start, end) || hyphenJoined(s, start, end) {
+	// A rejected candidate may have swallowed the start of a real number (the
+	// optional "1" country code glued to a preceding digit group), so retry from
+	// the next byte instead of skipping the whole candidate.
+	for pos := 0; pos < len(s); {
+		r := phoneRE.FindStringIndex(s[pos:])
+		if r == nil {
+			break
+		}
+		start, end := pos+r[0], pos+r[1]
+		if e, ok := acceptPhone(s, start, end); ok {
+			out = append(out, Match{Kind: Phone, Start: start, End: e})
+			pos = e
 			continue
 		}
-		// A leading "(" is not a word character, so check what precedes it too.
-		if s[start] == '(' && start > 0 && isWord(s[start-1]) {
-			continue
-		}
-		if validPhone(s[start:end]) {
-			out = append(out, Match{Kind: Phone, Start: start, End: end})
-		}
+		pos = start + 1
 	}
 	return out
+}
+
+// acceptPhone validates s[start:end]. The international pattern is greedy and
+// can run into digits that follow the number ("+1 415 555 2671 2024"), so on
+// failure it retries shorter spans that end at a separator.
+func acceptPhone(s string, start, end int) (int, bool) {
+	if phoneBoundsOK(s, start, end) && validPhone(s[start:end]) {
+		return end, true
+	}
+	for e := end - 1; e > start; e-- {
+		if c := s[e]; c != ' ' && c != '.' && c != '-' {
+			continue
+		}
+		if p := s[e-1]; !isDigit(p) && p != ')' {
+			continue
+		}
+		if phoneBoundsOK(s, start, e) && validPhone(s[start:e]) {
+			return e, true
+		}
+	}
+	return 0, false
+}
+
+func phoneBoundsOK(s string, start, end int) bool {
+	if !boundedAt(s, start, end) || hyphenJoined(s, start, end) {
+		return false
+	}
+	// A leading "(" is not a word character, so check what precedes it too.
+	return !(s[start] == '(' && start > 0 && isWord(s[start-1]))
 }
 
 func validPhone(text string) bool {
@@ -39,6 +71,9 @@ func validPhone(text string) bool {
 	n := len(digits)
 	if n > 15 {
 		return false // E.164 maximum
+	}
+	if plus && digits[0] == '1' {
+		return n == 11 && nanp(digits[1:]) // country code 1 is always NANP
 	}
 	if digits[0] == '1' && n == 11 {
 		return nanp(digits[1:])
