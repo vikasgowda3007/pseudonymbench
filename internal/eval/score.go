@@ -77,6 +77,7 @@ type Report struct {
 	Kinds   map[detect.Kind]KindScore `json:"kinds"`
 
 	// Overall counts every changed region, typed or not.
+	Neutral         int     `json:"neutral_regions"` // replacements that only touched out-of-scope PII
 	Regions         int     `json:"regions"`
 	RegionsTP       int     `json:"regions_tp"` // regions overlapping any gold span
 	PrecisionAll    float64 `json:"precision_overall"`
@@ -106,6 +107,9 @@ func Score(label string, samples []synth.Sample, preds [][]Region, errs []bool) 
 			}
 		}
 		for _, g := range s.Spans {
+			if g.Kind == KindOther {
+				continue // out of scope: neither a hit nor a miss
+			}
 			ks := rep.Kinds[g.Kind]
 			ks.Gold++
 			for _, r := range regions {
@@ -125,10 +129,18 @@ func Score(label string, samples []synth.Sample, preds [][]Region, errs []bool) 
 		for _, r := range regions {
 			n := max(r.Replaced, 1)
 			touched := goldTouched(r, s.Spans)
-			rep.Regions += n
-			if len(touched) > 0 {
-				rep.RegionsTP += min(n, len(touched))
+			other := touched[KindOther]
+			delete(touched, KindOther)
+			inScope := 0
+			for _, c := range touched {
+				inScope += c
 			}
+			if inScope == 0 && other > 0 {
+				rep.Neutral += n // changed text that is PII of a kind we do not target
+				continue
+			}
+			rep.Regions += n
+			rep.RegionsTP += min(n, inScope)
 			// Typed precision: each placeholder of kind k counts as a prediction
 			// of k, correct if the region overlaps a gold span of that kind.
 			for _, k := range r.Kinds {
@@ -199,6 +211,10 @@ func (r Report) Markdown() string {
 		fmt.Fprintf(&sb, "| %s | %d | %s | %s | %d | %s |\n", k, ks.Gold, rec, recx, ks.Predicted, prec)
 	}
 	fmt.Fprintf(&sb, "\nOverall precision (any changed region overlapping a gold span): %.3f over %d replacements. ", r.PrecisionAll, r.Regions)
-	fmt.Fprintf(&sb, "Clean text (no PII): %d of %d samples had something masked (%.1f%%).\n", r.CleanWithRegion, r.CleanSamples, 100*r.CleanFPRate)
+	fmt.Fprintf(&sb, "Clean text (no PII): %d of %d samples had something masked (%.1f%%).", r.CleanWithRegion, r.CleanSamples, 100*r.CleanFPRate)
+	if r.Neutral > 0 {
+		fmt.Fprintf(&sb, " %d further replacements touched only out-of-scope PII (names, addresses, ...) and are not counted.", r.Neutral)
+	}
+	sb.WriteString("\n")
 	return sb.String()
 }

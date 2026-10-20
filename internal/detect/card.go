@@ -145,3 +145,21 @@ func plausibleIssuer(d []byte) bool {
 	}
 	return false
 }
+
+// LuhnValid reports whether the digits of s, ignoring spaces and hyphens, pass
+// the Luhn check. It is exported for the evaluation tools, which use it to
+// explain misses on datasets whose card numbers were not generated with a
+// valid check digit.
+func LuhnValid(s string) bool {
+	d := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case isDigit(c):
+			d = append(d, c)
+		case c == ' ' || c == '-':
+		default:
+			return false
+		}
+	}
+	return luhnValid(d)
+}

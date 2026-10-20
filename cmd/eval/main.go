@@ -76,13 +76,20 @@ func cmdDetector(args []string) error {
 	data := fs.String("data", "data/synthetic.jsonl", "labelled JSONL")
 	label := fs.String("label", "regex tier (detector only)", "name in the report")
 	out := fs.String("out", "", "write the report JSON here")
+	misses := fs.Int("misses", 0, "also print up to this many missed gold spans per kind (public or synthetic data only)")
 	fs.Parse(args)
 	samples, err := eval.LoadJSONL(*data)
 	if err != nil {
 		return err
 	}
-	rep := eval.Score(*label, samples, eval.DetectorRegions(samples), nil)
-	return emit(rep, *out)
+	preds := eval.DetectorRegions(samples)
+	if err := emit(eval.Score(*label, samples, preds, nil), *out); err != nil {
+		return err
+	}
+	if *misses > 0 {
+		fmt.Print(eval.Diagnose(samples, preds, *misses))
+	}
+	return nil
 }
 
 func cmdProxy(args []string) error {
