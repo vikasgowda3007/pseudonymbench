@@ -1,0 +1,187 @@
+// Command eval measures what a masking proxy does to PII, from the outside.
+//
+//	eval gen      -n 2000 -seed 1 -out data/synthetic.jsonl
+//	eval detector -data data/synthetic.jsonl
+//	eval proxy    -data data/synthetic.jsonl -target URL -mock URL -label NAME
+//	eval fields   -target URL -mock URL -label NAME -out results/fields-NAME.json
+//	eval merge    results/fields-*.json
+//
+// "proxy" and "fields" need the mock upstream (cmd/mockupstream) behind the
+// proxy under test: the mock records what it received, and these commands read
+// that back. Start the mock with -first-token 0 -token-delay 0 -chunks 1 so
+// evaluation does not wait on simulated generation time.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/vikasgowda3007/pseudonymbench/internal/eval"
+	"github.com/vikasgowda3007/pseudonymbench/internal/synth"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		usage()
+	}
+	var err error
+	switch os.Args[1] {
+	case "gen":
+		err = cmdGen(os.Args[2:])
+	case "detector":
+		err = cmdDetector(os.Args[2:])
+	case "proxy":
+		err = cmdProxy(os.Args[2:])
+	case "fields":
+		err = cmdFields(os.Args[2:])
+	case "merge":
+		err = cmdMerge(os.Args[2:])
+	default:
+		usage()
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "eval:", err)
+		os.Exit(1)
+	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage: eval gen|detector|proxy|fields|merge [flags]  (run a subcommand with -h)")
+	os.Exit(2)
+}
+
+func cmdGen(args []string) error {
+	fs := flag.NewFlagSet("gen", flag.ExitOnError)
+	n := fs.Int("n", 2000, "samples")
+	seed := fs.Int64("seed", 1, "seed")
+	out := fs.String("out", "data/synthetic.jsonl", "output file")
+	fs.Parse(args)
+	if err := os.MkdirAll(dir(*out), 0o755); err != nil {
+		return err
+	}
+	if err := eval.SaveJSONL(*out, synth.New(*seed).Dataset(*n)); err != nil {
+		return err
+	}
+	fmt.Printf("wrote %d samples to %s (seed %d)\n", *n, *out, *seed)
+	return nil
+}
+
+func cmdDetector(args []string) error {
+	fs := flag.NewFlagSet("detector", flag.ExitOnError)
+	data := fs.String("data", "data/synthetic.jsonl", "labelled JSONL")
+	label := fs.String("label", "regex tier (detector only)", "name in the report")
+	out := fs.String("out", "", "write the report JSON here")
+	fs.Parse(args)
+	samples, err := eval.LoadJSONL(*data)
+	if err != nil {
+		return err
+	}
+	rep := eval.Score(*label, samples, eval.DetectorRegions(samples), nil)
+	return emit(rep, *out)
+}
+
+func cmdProxy(args []string) error {
+	fs := flag.NewFlagSet("proxy", flag.ExitOnError)
+	data := fs.String("data", "data/synthetic.jsonl", "labelled JSONL")
+	target := fs.String("target", "http://localhost:8080/v1/chat/completions", "chat-completions URL of the proxy under test")
+	mock := fs.String("mock", "http://localhost:9000", "mock upstream base URL")
+	label := fs.String("label", "pseudonymbench", "name in the report")
+	conc := fs.Int("c", 16, "concurrent requests")
+	out := fs.String("out", "", "write the report JSON here")
+	var hdr headers
+	fs.Var(&hdr, "H", "extra request header 'Name: value' (repeatable), e.g. Authorization")
+	fs.Parse(args)
+
+	samples, err := eval.LoadJSONL(*data)
+	if err != nil {
+		return err
+	}
+	t := eval.Target{URL: *target, MockURL: *mock, Headers: hdr.m, Concurrency: *conc}
+	runID := fmt.Sprintf("p%d", time.Now().UnixNano())
+	preds, errs := eval.RunProxy(context.Background(), t, runID, samples)
+	return emit(eval.Score(*label, samples, preds, errs), *out)
+}
+
+func cmdFields(args []string) error {
+	fs := flag.NewFlagSet("fields", flag.ExitOnError)
+	target := fs.String("target", "http://localhost:8080/v1/chat/completions", "chat-completions URL of the proxy under test")
+	mock := fs.String("mock", "http://localhost:9000", "mock upstream base URL")
+	label := fs.String("label", "pseudonymbench", "name in the report")
+	out := fs.String("out", "", "write the report JSON here")
+	var hdr headers
+	fs.Var(&hdr, "H", "extra request header 'Name: value' (repeatable)")
+	fs.Parse(args)
+
+	t := eval.Target{URL: *target, MockURL: *mock, Headers: hdr.m}
+	rep := eval.RunFields(context.Background(), t, fmt.Sprintf("f%d", time.Now().UnixNano()), *label)
+	fmt.Print(eval.FieldsMarkdown([]eval.FieldReport{rep}))
+	if *out != "" {
+		return writeJSON(*out, rep)
+	}
+	return nil
+}
+
+func cmdMerge(args []string) error {
+	var reports []eval.FieldReport
+	for _, p := range args {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		var r eval.FieldReport
+		if err := json.Unmarshal(b, &r); err != nil {
+			return fmt.Errorf("%s: %w", p, err)
+		}
+		reports = append(reports, r)
+	}
+	fmt.Print(eval.FieldsMarkdown(reports))
+	return nil
+}
+
+func emit(rep eval.Report, out string) error {
+	fmt.Println(rep.Markdown())
+	if out != "" {
+		return writeJSON(out, rep)
+	}
+	return nil
+}
+
+func writeJSON(path string, v any) error {
+	if err := os.MkdirAll(dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o644)
+}
+
+func dir(path string) string {
+	if i := strings.LastIndexByte(path, '/'); i > 0 {
+		return path[:i]
+	}
+	return "."
+}
+
+// headers is a repeatable -H flag.
+type headers struct{ m map[string]string }
+
+func (h *headers) String() string { return "" }
+
+func (h *headers) Set(v string) error {
+	name, val, ok := strings.Cut(v, ":")
+	if !ok {
+		return fmt.Errorf("header %q: want 'Name: value'", v)
+	}
+	if h.m == nil {
+		h.m = map[string]string{}
+	}
+	h.m[strings.TrimSpace(name)] = strings.TrimSpace(val)
+	return nil
+}

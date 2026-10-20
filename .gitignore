@@ -6,3 +6,5 @@ bin/
 coverage.out
 /results/*.tmp
 /results/smoke/
+/data/
+/results/eval-smoke/
