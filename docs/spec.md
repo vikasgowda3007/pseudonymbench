@@ -47,7 +47,7 @@ Cut from the original plan: Presidio sidecar in the proxy, format-preserving tok
 - **Load client** (`cmd/loadgen`): open-loop, latency measured from the intended send time, TTFT measured at the first content delta, marked invalid when it falls behind its own schedule. Written because the SSE timing support of k6, vegeta, wrk2 and oha is not documented.
 - **Overhead** = proxy minus direct-to-same-mock at the same payload, mode and rate, per percentile. A second baseline run (`direct-repeat`) gives the noise floor.
 - **Payload sets**: plain, pii, pii-long, tools. Values regenerated per request from a seeded generator.
-- **Rows**: direct baseline; this proxy with the in-memory vault; this proxy with the Redis vault (needs Redis); LiteLLM + Presidio guardrail (template in `bench/rivals/litellm/`, untested); optionally one more rival.
+- **Rows**: direct baseline; this proxy with the in-memory vault; this proxy with the Redis vault (needs Redis); LiteLLM + Presidio guardrail (`bench/rivals/litellm/`); optionally one more rival.
 - **Rival rule**: rivals ship different detectors, so report each "as shipped" with its configuration. Overhead is comparable; detection is not a like-for-like contest.
 - **Environment**: record CPU, OS and versions with every result. Publishable numbers need a quiet Linux host; laptop runs are labelled as such.
 
@@ -66,17 +66,17 @@ Cut from the original plan: Presidio sidecar in the proxy, format-preserving tok
 | Harness: mock, open-loop load generator, report, scripts | Done |
 | Eval: scoring, field matrix, Nemotron converter, Presidio client | Done |
 | Laptop benchmark with the fixed mock | See `results/` and the README |
-| Redis row, LiteLLM row, Presidio row | **Not run**: no Docker daemon was available. Templates and code exist; numbers do not |
+| Redis row | Done on Redis 7.4 in Docker Desktop (`results/redis-3/`, `redis-3-long/`); Lua allocation, pipelined, is the default |
+| LiteLLM + Presidio row, Presidio-alone row | Done on one laptop with pinned image digests (`results/rivals-*`, `results/presidio/`); see the README |
 | Quiet-host Linux numbers | Not done |
-| Licence file | Not chosen: the repo owner decides |
+| Licence file | Apache-2.0, chosen by the repo owner on 2026-10-20 |
 
 ## Open items
 
-- Built since v1: a Lua allocation mode (`-redis-lua`) and a real-Redis benchmark comparing it with `HSETNX`; a type-confusion matrix in the scorer. Their measured results need the Docker-backed Redis (see Status).
-- Run the Redis, LiteLLM and Presidio rows on a host with Docker; pin image digests and publish configs next to the numbers.
+- Built since v1: a Lua allocation mode (`-redis-lua`, the default) and a real-Redis benchmark comparing it with `HSETNX`; a type-confusion matrix in the scorer; concurrent token prefetch and then a pipelined single-round-trip batch for Lua mode.
+- The Redis and rival rows ran on Docker Desktop on a laptop. Repeat them on a quiet Linux host.
 - Re-run overhead on a quiet Linux host with pinned CPUs and at more than one rate; collect enough samples for p99.9.
 - k6 has no native SSE support (community extension xk6-sse exists; the core request was closed as not planned), so the custom load client stays. See `research/recheck-2026-10-20.md`.
-- Whether LiteLLM still buffers the whole stream on the version benchmarked.
+- LiteLLM 1.106.0 with the Presidio guardrail does buffer the whole stream (observed, `results/rivals-*`); the guardrail's docs page does not describe streaming, so re-observe on every version.
 - ISO/IEC 7812-1 (card), ISO 13616 (IBAN) and the SSA randomization pages returned 403 during research. Checksum rules rest on Presidio's implementation, POMS RM 10201.035, and public issuer documentation.
 - Gap-check claims were re-checked on 2026-10-20 (`research/recheck-2026-10-20.md`): unchanged, and one competitor's own docs say no TTFT comparison has been published. The sample is still about a dozen repos.
-- Pick a licence.

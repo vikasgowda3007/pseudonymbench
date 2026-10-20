@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/vikasgowda3007/pseudonymbench/internal/jsonx"
 )
 
 // Outcome is what happened to a canary planted in one request field.
@@ -16,6 +18,7 @@ const (
 	Masked   Outcome = "masked"   // the canary did not reach the upstream
 	Leaked   Outcome = "LEAKED"   // the canary reached the upstream unchanged
 	Rejected Outcome = "rejected" // the proxy refused the request (fails closed)
+	Dropped  Outcome = "dropped"  // the field never reached the upstream: removed, not masked
 	Failed   Outcome = "error"    // the harness could not tell
 )
 
@@ -116,6 +119,16 @@ func Cases() []FieldCase {
 	}
 }
 
+// forwardKey names, for cases that live in one top-level request key, the key
+// whose absence from the upstream body means the proxy removed the field. Such a
+// proxy leaks nothing, but it has not shown that it can mask the field, and the
+// request the upstream sees is not the one the client sent.
+var forwardKey = map[string]string{
+	"tool-description": "tools", "tool-schema": "tools", "functions-legacy": "functions",
+	"user": "user", "metadata-value": "metadata", "metadata-key": "metadata", "stop": "stop",
+	"prediction": "prediction", "response-format": "response_format", "unknown-field": "x_vendor_extension",
+}
+
 // FieldResult is the outcome for one case.
 type FieldResult struct {
 	ID      string  `json:"id"`
@@ -135,7 +148,10 @@ type FieldReport struct {
 func RunFields(ctx context.Context, t Target, runID, label string) FieldReport {
 	rep := FieldReport{Label: label}
 	for i, c := range Cases() {
-		canary := fmt.Sprintf("canary%02d@canary.test", i)
+		// The domain must be one a validating detector accepts: Presidio's email
+		// recognizer checks the TLD against the public suffix list, so a made-up
+		// ".test" address would "leak" there only because nothing treats it as an email.
+		canary := fmt.Sprintf("canary%02d@example.com", i)
 		id := fmt.Sprintf("%s-field-%s", runID, c.ID)
 		body, _ := json.Marshal(c.Build(canary))
 		res := FieldResult{ID: c.ID, Field: c.Field}
@@ -153,6 +169,8 @@ func RunFields(ctx context.Context, t Target, runID, label string) FieldReport {
 				res.Outcome = Failed
 			case strings.Contains(string(got), canary):
 				res.Outcome = Leaked
+			case forwardKey[c.ID] != "" && !hasTopKey(got, forwardKey[c.ID]):
+				res.Outcome = Dropped
 			default:
 				res.Outcome = Masked
 			}
@@ -160,6 +178,16 @@ func RunFields(ctx context.Context, t Target, runID, label string) FieldReport {
 		rep.Results = append(rep.Results, res)
 	}
 	return rep
+}
+
+func hasTopKey(body []byte, key string) bool {
+	v, err := jsonx.Decode(body)
+	if err != nil {
+		return true // cannot tell; do not claim a drop
+	}
+	m, _ := v.(map[string]any)
+	_, ok := m[key]
+	return ok
 }
 
 // FieldsMarkdown renders several proxies side by side, one row per field.
@@ -200,5 +228,21 @@ func FieldsMarkdown(reports []FieldReport) string {
 	}
 	sort.Strings(leaks)
 	fmt.Fprintf(&sb, "\nFields where the canary reached the upstream: %s.\n", strings.Join(leaks, ", "))
+	var drops []string
+	for _, r := range reports {
+		n := 0
+		for _, x := range r.Results {
+			if x.Outcome == Dropped {
+				n++
+			}
+		}
+		if n > 0 {
+			drops = append(drops, fmt.Sprintf("%s %d", r.Label, n))
+		}
+	}
+	if len(drops) > 0 {
+		sort.Strings(drops)
+		fmt.Fprintf(&sb, "Fields the proxy removed instead of masking (counted as not leaked): %s.\n", strings.Join(drops, ", "))
+	}
 	return sb.String()
 }

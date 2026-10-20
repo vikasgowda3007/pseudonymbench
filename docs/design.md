@@ -185,10 +185,20 @@ microseconds with the `HSETNX` sequence and 118 with the script on one goroutine
 92 against 34 with ten in parallel. Looking up an existing value is the same either
 way. `go test ./internal/vault -bench RedisTokenize` reproduces it.
 
-A request with many values would still pay one round trip per value, so against a
+A request with many values would still pay a round trip per value, so against a
 remote vault the masker first collects every distinct value (a dry run over a
-separately decoded copy of the body), asks the vault for all of their tokens at once
-with at most 16 calls in flight, and then masks from memory. Memory vaults skip this.
+separately decoded copy of the body), asks the vault for all of their tokens, and then
+masks from memory. With Lua allocation the vault takes them in **one pipelined round
+trip**: one `EVALSHA` per value, up to 256 per pipeline, each script atomic and run in
+order, so a repeated value gets one token. A candidate token that collides, which is
+rare, is re-allocated on its own; a `NOSCRIPT` answer (Redis restarted or the script
+cache was flushed) loads the script and resends the pipeline, and scripts that already
+ran find their values and return the same tokens. The `HSETNX` sequence has dependent
+steps per value and cannot be folded into one round trip, so it (and `-redis-batch=false`)
+allocates with at most 16 concurrent calls instead. Memory vaults skip all of this.
+On a real Redis 7.4.11, allocating a request's values took 0.24 / 0.33 / 0.72 ms for
+5 / 20 / 60 values pipelined against 0.36 / 0.82 / 2.4 ms with concurrent calls
+(`go test ./internal/vault -run xxx -bench RedisBatch`).
 
 The session cap counts `v2t` (distinct values), not `t2v`, because the orphan
 tokens that concurrent requests create for a moment must not trip it (found by a
@@ -224,10 +234,11 @@ first byte, total). No values, no prompt text, no headers.
 | Decision | Alternatives | Why |
 |---|---|---|
 | Go | Java, Python | Small, I/O-bound, concurrent; `net/http` streaming and RE2 fit; native fuzzing. The cost is that Go forces candidate-then-validate regexes, which the detectors need anyway. |
-| Regex tier only | Presidio sidecar | A measured regex tier is the baseline; names and addresses need NER, which is its own project (model download, latency, a second service). The eval harness can score a Presidio analyzer later through the same interface. |
+| Regex tier only | Presidio sidecar | A measured regex tier is the baseline; names and addresses need NER, which is its own project (model download, latency, a second service). The eval harness scores a Presidio analyzer through the same interface (`eval presidio`), and `scripts/rivals.sh` runs it behind LiteLLM; see the README for what that shows. |
 | Random tokens + value index | HMAC tokens, format-preserving encryption, fake values | Random tokens leak nothing; deterministic tokens enable offline guessing of low-entropy values if the key leaks; FF3/FF3-1 are dropped from NIST's 2025 draft and fake values can collide with real text. |
 | No `hash` policy action | `hash`, `redact` | An unkeyed hash of an SSN or phone is enumerable. Actions are `mask`, `block`, `off`. |
 | Lua script for allocation, default on | `HSETNX` sequence, Redis Functions | `HSETNX` on two hashes is enough for correctness, but measured 2.6x slower on a new value (313 vs 118 microseconds). `-redis-lua=false` keeps the sequence for deployments that forbid scripts. Redis Functions add operational weight for no gain here. |
+| Pipeline a request's allocations (Lua mode) | One round trip per value, concurrent single calls | Measured 2-3x faster per request on a real Redis, with no new failure mode: scripts stay atomic, order is preserved, a flushed script cache recovers. `-redis-batch=false` keeps the concurrent path for comparison. |
 | Exact-match restoration | Fuzzy matching | Fuzzy restoration can restore a value the model never saw. A changed token stays visible instead. |
 | Fail closed | Fail open | Forwarding a body the proxy could not scan defeats the purpose. |
 | OpenAI chat-completions only | Anthropic Messages, Responses API | Each is a different SSE dialect and a separate bug class. Other paths return 403 instead of being forwarded unscanned. |

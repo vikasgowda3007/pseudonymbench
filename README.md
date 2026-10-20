@@ -30,14 +30,21 @@ What this says:
 - Detection itself is cheap: `go test -bench` measures about 1.4 µs for 2 KB of prose and about 22 µs for 1.8 KB containing 40 PII values. The rest of the half millisecond (the extra network hop, JSON decode and encode, the vault) is not broken down here.
 
 
-**With Redis as the vault** (Redis 7.4.11 in Docker Desktop on the same laptop, so each vault round trip also crosses the VM's port forward, about 100 µs; proxy, mock and load generator still run natively; 2,500 requests per cell; `results/redis-2/`):
+**With Redis as the vault** (Redis 7.4 in Docker Desktop on the same laptop, so each vault round trip also crosses the VM's port forward; proxy, mock and load generator native; 2,500 requests per cell; `results/redis-3/` for `pii` and `results/redis-3-long/` for `pii-long`). Added median in ms, JSON response / time to first token:
 
-| payload | memory vault: JSON p50 / p99, TTFT p50 / p99 (ms) | Redis, Lua allocation (default) | Redis, `HSETNX` sequence |
-|---|---|---|---|
-| pii (5 values) | +0.4 / +0.9, +0.4 / +1.4 | +1.5 / +1.9, +1.8 / +2.1 | +2.5 / +3.4, +2.8 / +3.2 |
-| pii-long (about 20 values) | +0.6 / +1.2, +0.6 / +0.4 | +3.3 / +4.9, +3.6 / +3.0 | +3.2 / +3.9, +4.8 / +5.2 |
+| payload | memory vault | Redis, `HSETNX` sequence | Redis, Lua, concurrent calls | Redis, Lua, one pipelined round trip (default) |
+|---|---:|---:|---:|---:|
+| pii (5 values) | +0.5 / +0.4 | +3.0 / +2.8 | +2.0 / +1.6 | +1.6 / +1.7 |
+| pii-long (about 20 values) | +0.8 / +0.5 | +3.4 / +4.1 | +3.4 / +3.4 | +2.6 / +2.0 |
 
-A remote vault costs a millisecond or two on this setup, and it grows with the number of distinct values in a request. In isolation (`BenchmarkRequestRedis`, masking one request, including the cleanup round trip) the Lua script takes 0.34 ms for the 5-value payload against 0.73 ms for the `HSETNX` sequence, and 0.94 ms against 2.1 ms for the 20-value payload; end to end the two are tied for `pii-long` JSON (3.3 against 3.2 ms) and Lua is ahead everywhere else. A request's tokens are allocated concurrently (up to 16 at once) rather than one round trip per value; before that change the `HSETNX` row for `pii-long` was +5.5 ms at p50. Allocating all of a request's tokens in one pipelined round trip would cut it further and has not been built.
+A remote vault costs a millisecond or three on this setup, and it grows with the number of distinct values in a request. The p99 column is not quoted: this laptop was shared with other work, identical cells differed by tens of milliseconds at p99 between passes, and several cells were flagged `valid=false` by the load generator (they are in the committed `REPORT.md` files and not used here; the `pii-long` rows come from a second pass whose own baseline was flagged, so they are measured against that pass's valid repeat run, `REPORT-baseline-repeat.md`). Against `HSETNX`, Lua is faster everywhere; the pipelined batch beats concurrent single calls by about a millisecond on the 20-value payload and is within noise on the 5-value one. The three Redis modes are measured in isolation, where the noise is much lower, by `go test` against the same Redis (masking one request including the cleanup round trip, `BenchmarkRequestRedis`):
+
+| payload | `HSETNX` sequence | Lua, concurrent calls | Lua, pipelined (default) |
+|---|---:|---:|---:|
+| pii (5 values) | 0.71 to 0.80 ms | 0.37 to 0.48 ms | 0.25 to 0.29 ms |
+| pii-long (about 20 values) | 2.2 to 2.3 ms | 1.0 to 1.25 ms | 0.48 ms |
+
+(three runs each; `go test ./internal/mask -run xxx -bench RequestRedis` with `PSEUDONYMBENCH_TEST_REDIS=localhost:6379`.) The pipelined path sends one `EVALSHA` per value in a single round trip, so 60 values cost 0.7 to 1.0 ms against 2.1 to 2.4 ms with concurrent calls (`BenchmarkRedisBatch`).
 
 Run it with `scripts/bench.sh`; `go run ./cmd/benchreport -subject pseudonymbench results/<run>/*.json` prints this table.
 <!-- overhead:end -->
@@ -70,37 +77,79 @@ The card row is not a detector failure in the usual sense. Only 41 of the 380 ca
 
 6.8% of PII-free samples had something masked. Almost all of that is 10-digit IDs that look like US phone numbers and 16-digit IDs that happen to pass Luhn: a checksum alone lets about one random digit string in ten through.
 
-Not run yet: a Presidio analyzer row (`eval presidio`, needs Docker) and rival proxies.
+The same data through Presidio and through LiteLLM is in the next section.
+
+### Against LiteLLM with its Presidio guardrail
+
+The comparison people ask for: the same harness pointed at [LiteLLM](https://github.com/BerriAI/litellm) 1.106.0 with its Presidio guardrail (`mode: pre_call`, `output_parse_pii: true`, so masked values are restored in the reply) in front of the Presidio analyzer (spaCy `en_core_web_lg` 3.8.0) and anonymizer, all stock images, defaults left alone, digests in [`results/rivals-overhead/images.txt`](results/rivals-overhead/images.txt), configuration in [`bench/rivals/litellm/`](bench/rivals/litellm/). This proxy runs in a container with the in-memory vault. Everything on the proxy side sits behind Docker Desktop's network on the same Apple M4 laptop; the mock upstream and the load generator run natively, so both proxies pay the same extra hop. Reproduce with `scripts/rivals.sh`.
+
+This is not a contest between equals. Presidio recognises names, addresses, dates and a long list of other entity types that this proxy does not look for, and LiteLLM is a general gateway doing far more than masking. What the tables show is what each costs and covers *for the five kinds this repository scores*.
+
+**Streaming: time to first token** (2 req/s for 60 s after a 6 s warmup, 120 requests per cell, no errors, mock overflow 0; `results/rivals-lowrate/`). 2 req/s is slow enough that the analyzer is not saturated, so this isolates what LiteLLM does with a stream:
+
+| payload | direct to the mock: p50 / p99 (ms) | pseudonymbench (container) | LiteLLM + Presidio |
+|---|---:|---:|---:|
+| pii (5 values) | 152.6 / 214.9 | 155.0 / 198.5 | **3318.1 / 3651.4** |
+| pii-long (about 20 values) | 153.0 / 156.7 | 155.4 / 159.6 | **3359.8 / 3942.2** |
+
+LiteLLM's first byte arrives at the same moment as its last: its time to first token equals the whole completion (about 3.3 s here, which is the mock's 150 ms prefill plus 240 chunks 12 ms apart). I checked that by hand too: one request, first byte after 3.6 s through LiteLLM against 0.16 s through this proxy and direct. I also checked where the hold comes from, three requests each: the same LiteLLM with the guardrail block removed streamed normally (first byte 0.17 s), and with `output_parse_pii: false` (placeholders stay in the reply, nothing is restored) the first byte still took 3.4 s. So in this version the guardrail holds the stream whether or not it restores values. This proxy adds about 2.5 ms at the median, in the same range as in the native runs plus a container hop. The direct run's p99 in the first row (214.9 ms) is a one-off spike on the baseline itself; read the p50 column.
+
+**JSON responses and the load that saturates the stock analyzer** (10 req/s, 40 s, 400 requests per cell; `results/rivals-overhead/`):
+
+| payload | mode | LiteLLM + Presidio: added p50 / p99 (ms) | pseudonymbench (container): added p50 / p99 (ms) |
+|---|---|---:|---:|
+| pii | JSON | +32.8 / +50.2 | +3.1 / +3.9 |
+| pii-long | JSON | +69.3 / +110.9 | +3.2 / +5.5 |
+| pii | stream, TTFT | +3242 / +4925 | +2.5 / +7.2 |
+| pii-long | stream, TTFT | +6220 / +8562 | +2.8 / +7.0 |
+
+The container proxy's +3 ms (against +0.5 ms native, above) is the Docker hop; the baseline goes straight from the host to the mock. The pii-long stream row is worse than the 2 req/s run because the stock analyzer runs one worker and queues at 10 req/s: that row measures a default deployment, not a tuned one. A tuned deployment would add workers; I did not tune it.
+
+**Detection** on the first 3,000 Nemotron-PII test rows, recall by span overlap, from the outside (what the upstream received). "Presidio alone" calls the analyzer directly (`eval presidio`, `results/presidio/`); LiteLLM's numbers match it at score threshold 0.
+
+| kind | gold spans | this proxy | Presidio analyzer alone | LiteLLM + Presidio |
+|---|---:|---:|---:|---:|
+| EMAIL | 1,221 | 0.998 | 0.998 | 0.998 |
+| PHONE | 638 | 0.997 | 0.998 | 0.998 |
+| SSN | 249 | 1.000 | 1.000 | 1.000 |
+| CARD | 380 | 0.113 | 0.687 | 0.687 |
+| share of replacements that overlap a labelled span | | 0.995 | 0.526 | 0.522 |
+
+- **Cards:** Presidio masks 69% of the card numbers against 11% here, because 89% of this dataset's card numbers fail the Luhn check and this detector requires it. Presidio does not call them cards: of 380, LiteLLM's placeholders say card for 41, phone for 52, and something else for 168; 119 are left in the text.
+- **Precision:** about half of what Presidio replaces overlaps no labelled span at all (and thousands more replacements fall on names and addresses, which the dataset labels but this benchmark does not score). On the synthetic set, whose PII-free samples are full of look-alike dates, version strings and tracking numbers, Presidio alone masked something in 88.8% of them against 6.8% for the regex tier, and its phone and SSN precision were 0.63 and 0.73 against 0.87 and 1.00. That is Presidio treating dates and IDs as PII, which is a different definition from this benchmark's; do not read it as an error rate. It does mean the model loses more context.
+- **Whitespace:** LiteLLM drops the space that followed a placeholder, which wrecks exact-span scoring (0.05 exact-span recall on emails against 0.998 by overlap). Read the overlap column.
 
 ### Which request fields leak
 
-A distinct canary email is planted in each of 21 request fields and the body the upstream received is checked. The control sends the same requests straight to the mock.
+A distinct canary email is planted in each of 21 request fields and the body the upstream received is checked. The control sends the same requests straight to the mock. The middle column is this proxy in a container; the right-hand pair are LiteLLM 1.106.0 with its Presidio guardrail as configured in [`bench/rivals/litellm/`](bench/rivals/litellm/config.yaml) and the control. Native and containerised runs of this proxy give the same column (`results/eval-synthetic/`, `results/rivals-nemotron/`).
 
-| request field | pseudonymbench | no proxy (control) |
-|---|---|---|
-| `messages[].content` (string) | masked | LEAKED |
-| `messages[].content[].text` | masked | LEAKED |
-| system message | masked | LEAKED |
-| developer message | masked | LEAKED |
-| assistant message | masked | LEAKED |
-| assistant refusal | masked | LEAKED |
-| `tool_calls[].function.arguments` (value) | masked | LEAKED |
-| `tool_calls[].function.arguments` (key) | masked | LEAKED |
-| tool message content | masked | LEAKED |
-| `tools[].function.description` | masked | LEAKED |
-| `tools[].function.parameters` (schema text) | masked | LEAKED |
-| `functions[].description` (legacy) | masked | LEAKED |
-| `user` | masked | LEAKED |
-| `metadata` (value) | masked | LEAKED |
-| `metadata` (key) | masked | LEAKED |
-| `stop` | masked | LEAKED |
-| `prediction.content` | masked | LEAKED |
-| `response_format.json_schema.description` | masked | LEAKED |
-| `image_url.url` (http, query string) | masked | LEAKED |
-| unknown top-level field | masked | LEAKED |
-| unknown top-level field (its name) | masked | LEAKED |
+| request field | pseudonymbench | LiteLLM + Presidio | no proxy (control) |
+|---|---|---|---|
+| `messages[].content` (string) | masked | masked | LEAKED |
+| `messages[].content[].text` | masked | masked | LEAKED |
+| system message | masked | masked | LEAKED |
+| developer message | masked | masked | LEAKED |
+| assistant message | masked | masked | LEAKED |
+| assistant refusal | masked | LEAKED | LEAKED |
+| `tool_calls[].function.arguments` (value) | masked | LEAKED | LEAKED |
+| `tool_calls[].function.arguments` (key) | masked | LEAKED | LEAKED |
+| tool message content | masked | masked | LEAKED |
+| `tools[].function.description` | masked | LEAKED | LEAKED |
+| `tools[].function.parameters` (schema text) | masked | LEAKED | LEAKED |
+| `functions[].description` (legacy) | masked | LEAKED | LEAKED |
+| `user` | masked | dropped | LEAKED |
+| `metadata` (value) | masked | dropped | LEAKED |
+| `metadata` (key) | masked | dropped | LEAKED |
+| `stop` | masked | LEAKED | LEAKED |
+| `prediction.content` | masked | LEAKED | LEAKED |
+| `response_format.json_schema.description` | masked | LEAKED | LEAKED |
+| `image_url.url` (http, query string) | masked | LEAKED | LEAKED |
+| unknown top-level field | masked | LEAKED | LEAKED |
+| unknown top-level field (name) | masked | LEAKED | LEAKED |
 
-The same command can fill in a column for any other proxy that can be pointed at the mock: `scripts/eval.sh` with `RIVALS=...`.
+**12 of 21 fields reach the upstream through LiteLLM + Presidio unchanged; none do through this proxy.** Two caveats on reading the middle column. First, "dropped" means the field never arrived at the upstream (in this configuration LiteLLM did not forward `user` or `metadata`, checked by hand against the mock); nothing leaks, but nothing was masked either, and the request the model sees is not the one the client sent. Second, the guardrail's [documentation page](https://docs.litellm.ai/docs/proxy/guardrails/pii_masking_v2) does not say which request fields it scans, so the twelve "LEAKED" cells are a statement about this version as configured, not a claim that it breaks a documented promise. The canary is a plain `@example.com` address; a recognizer-based detector can only find what it recognizes, so a different kind of PII in those fields could behave differently.
+
+The same command can fill in a column for any other proxy that can be pointed at the mock: `scripts/eval.sh` with `RIVALS=...`, or `scripts/rivals.sh` for the container stack.
 
 ## Quick start
 
@@ -143,7 +192,7 @@ sequenceDiagram
 - **Masking is default-scan.** Every string in the request is scanned except a short list of fields the API validates (`model`, `role`, function names, base64 data). Unknown fields are scanned, not skipped. Tool-call `arguments` (JSON inside a string) are parsed and scanned.
 - **The stream rewriter** holds back only a trailing piece of text that could still grow into a token (at most 15 bytes), per choice and per field, and flushes it on the finish chunk, `[DONE]`, an error frame or end of input. Ordinary prose passes through in the event it arrived in. It is tested at every split position, with random chunking, with `n>1`, with parallel tool calls, and by a fuzz target that compares chunked output to whole-text restoration.
 - **Fails closed.** Invalid JSON, a compressed body, an oversize body, an unknown path, a blocked kind or a vault error returns an error; nothing is forwarded.
-- **Vault.** In memory or Redis. Redis holds AES-256-GCM ciphertext (bound to session and token) and HMAC-keyed value hashes, never plaintext, and allocates tokens with a single Lua script (or an `HSETNX` sequence with `-redis-lua=false`; measured 2.6x slower per new value). Against Redis, a request's tokens are allocated concurrently rather than one round trip per value.
+- **Vault.** In memory or Redis. Redis holds AES-256-GCM ciphertext (bound to session and token) and HMAC-keyed value hashes, never plaintext, and allocates tokens with a single Lua script (or an `HSETNX` sequence with `-redis-lua=false`; measured 2.6x slower per new value). Against Redis, all of a request's tokens are allocated in one pipelined round trip (`-redis-batch=false` for concurrent single calls).
 - **Audit log.** One JSON line per request: kinds, counts, timings, outcome. Never values, prompts or headers (a test greps for them).
 
 ## What it misses
@@ -173,7 +222,14 @@ scripts/eval.sh                     # detection quality + field matrix on synthe
 go run ./cmd/dataprep nemotron -n 3000 && DATA=data/nemotron-pii.jsonl scripts/eval.sh
 ```
 
-Requirements: Go 1.26, `curl`, `openssl`. Redis rows and rivals need Docker; see [docs/benchmarking.md](docs/benchmarking.md) and `bench/rivals/litellm/` (an untested template).
+Requirements: Go 1.26, `curl`, `openssl`. Redis rows and rivals need Docker; see [docs/benchmarking.md](docs/benchmarking.md) and `bench/rivals/litellm/`.
+
+```bash
+REDIS_URL=redis://localhost:6379/0 scripts/bench.sh   # Redis rows: HSETNX, Lua with concurrent calls, Lua pipelined
+export PSEUDONYMBENCH_KEY=$(openssl rand -hex 32)
+docker compose -f bench/rivals/litellm/docker-compose.yml up -d --build
+scripts/rivals.sh                                     # LiteLLM + Presidio vs this proxy: detection, fields, overhead
+```
 
 ## Repository layout
 
@@ -201,7 +257,7 @@ Several open-source proxies already mask and restore PII for OpenAI-style APIs. 
 | [Tamga](https://github.com/yatuk/tamga) | Go gateway; k6 open-loop load results, but with a no-PII payload and no direct baseline |
 | [PasteGuard](https://github.com/sgasser/pasteguard) | Mask and restore with streaming; ships an accuracy harness, no committed results |
 | [Anwesha33/pii-shield](https://github.com/Anwesha33/pii-shield) | A Go proxy with a plan close to this one's. At the commit I read it held back text for `content` only, shared one buffer across choices, and published detector latency, not proxy overhead |
-| [LiteLLM Presidio guardrail](https://docs.litellm.ai/docs/proxy/guardrails/pii_masking_v2) | Masks and restores; for OpenAI-format streams the guardrail buffers the whole response (see the research notes), which makes first-token latency equal full generation time |
+| [LiteLLM Presidio guardrail](https://docs.litellm.ai/docs/proxy/guardrails/pii_masking_v2) | Masks and restores. Measured here on 1.106.0 (above): the stream is held until the reply is complete, and 12 of 21 request fields were not masked |
 | [LLM Guard](https://github.com/protectai/llm-guard) | Anonymize/deanonymize scanners as a library; archived 2026-07 |
 
 A different project named `maskgate` (`tsymbaluyk/maskgate`) exists; this repository is unrelated to it, which is why it is called pseudonymbench.
@@ -210,6 +266,6 @@ A different project named `maskgate` (`tsymbaluyk/maskgate`) exists; this reposi
 
 - It is a benchmarked research tool, not production-grade software, and nothing here is a statement about legal compliance.
 - The proxy is a fully trusted component: it sees every prompt in plaintext and the `Authorization` header. Run it inside your trust boundary behind TLS.
-- Overhead numbers are from one laptop (Redis ran in a Docker Desktop VM on it). The LiteLLM and Presidio rows are not in this section yet; see below if they have been run.
+- Overhead numbers are from one laptop. The Redis and the LiteLLM/Presidio runs used Docker Desktop's VM on it, which adds a hop and some noise; a quiet Linux host with pinned CPUs is still to do. The LiteLLM stack was run as shipped and untuned, on one version, and its streaming and field behaviour is what that version did on 2026-10-20, not a statement about other versions.
 - Dataset: Nemotron-PII is by NVIDIA, licensed CC-BY-4.0; it is fetched on demand and not stored in this repository.
 - Licensed under the Apache License 2.0; see [LICENSE](LICENSE).

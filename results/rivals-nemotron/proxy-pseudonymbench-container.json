@@ -1,0 +1,102 @@
+{
+  "label": "pseudonymbench-container",
+  "samples": 3000,
+  "errors": 0,
+  "kinds": {
+    "CARD": {
+      "gold": 380,
+      "hit_overlap": 43,
+      "hit_exact": 41,
+      "predicted": 41,
+      "predicted_tp": 41,
+      "gold_chars": 7112,
+      "covered_chars": 793,
+      "recall_overlap": 0.11315789473684211,
+      "recall_exact": 0.10789473684210527,
+      "precision_typed": 1,
+      "leak_rate_chars": 0.8884983127109112,
+      "f2": 0.13755598208573255
+    },
+    "EMAIL": {
+      "gold": 1221,
+      "hit_overlap": 1218,
+      "hit_exact": 1210,
+      "predicted": 1218,
+      "predicted_tp": 1218,
+      "gold_chars": 28177,
+      "covered_chars": 28146,
+      "recall_overlap": 0.9975429975429976,
+      "recall_exact": 0.990990990990991,
+      "precision_typed": 1,
+      "leak_rate_chars": 0.0011001880966745592,
+      "f2": 0.9980334316617502
+    },
+    "IBAN": {
+      "gold": 0,
+      "hit_overlap": 0,
+      "hit_exact": 0,
+      "predicted": 1,
+      "predicted_tp": 0,
+      "gold_chars": 0,
+      "covered_chars": 0,
+      "recall_overlap": 0,
+      "recall_exact": 0,
+      "precision_typed": 0,
+      "leak_rate_chars": 0,
+      "f2": 0
+    },
+    "PHONE": {
+      "gold": 638,
+      "hit_overlap": 636,
+      "hit_exact": 628,
+      "predicted": 646,
+      "predicted_tp": 636,
+      "gold_chars": 7657,
+      "covered_chars": 7632,
+      "recall_overlap": 0.9968652037617555,
+      "recall_exact": 0.9843260188087775,
+      "precision_typed": 0.9845201238390093,
+      "leak_rate_chars": 0.003264986287057625,
+      "f2": 0.9943714821763602
+    },
+    "SSN": {
+      "gold": 249,
+      "hit_overlap": 249,
+      "hit_exact": 249,
+      "predicted": 249,
+      "predicted_tp": 249,
+      "gold_chars": 2739,
+      "covered_chars": 2739,
+      "recall_overlap": 1,
+      "recall_exact": 1,
+      "precision_typed": 1,
+      "leak_rate_chars": 0,
+      "f2": 1
+    }
+  },
+  "confusion": {
+    "CARD": {
+      "CARD": 41,
+      "MISSED": 337,
+      "PHONE": 2
+    },
+    "EMAIL": {
+      "EMAIL": 1218,
+      "MISSED": 3
+    },
+    "PHONE": {
+      "MISSED": 2,
+      "PHONE": 636
+    },
+    "SSN": {
+      "SSN": 249
+    }
+  },
+  "neutral_regions": 646,
+  "regions": 2156,
+  "regions_tp": 2146,
+  "precision_overall": 0.9953617810760668,
+  "clean_samples": 0,
+  "clean_with_region": 0,
+  "clean_fp_rate": 0
+}

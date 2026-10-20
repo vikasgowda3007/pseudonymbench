@@ -1,0 +1,101 @@
+{
+  "label": "pseudonymbench-container",
+  "samples": 1000,
+  "errors": 0,
+  "kinds": {
+    "CARD": {
+      "gold": 314,
+      "hit_overlap": 314,
+      "hit_exact": 314,
+      "predicted": 320,
+      "predicted_tp": 314,
+      "gold_chars": 5469,
+      "covered_chars": 5469,
+      "recall_overlap": 1,
+      "recall_exact": 1,
+      "precision_typed": 0.98125,
+      "leak_rate_chars": 0,
+      "f2": 0.9961928934010152
+    },
+    "EMAIL": {
+      "gold": 346,
+      "hit_overlap": 346,
+      "hit_exact": 346,
+      "predicted": 346,
+      "predicted_tp": 346,
+      "gold_chars": 7961,
+      "covered_chars": 7961,
+      "recall_overlap": 1,
+      "recall_exact": 1,
+      "precision_typed": 1,
+      "leak_rate_chars": 0,
+      "f2": 1
+    },
+    "IBAN": {
+      "gold": 305,
+      "hit_overlap": 305,
+      "hit_exact": 305,
+      "predicted": 305,
+      "predicted_tp": 305,
+      "gold_chars": 6847,
+      "covered_chars": 6847,
+      "recall_overlap": 1,
+      "recall_exact": 1,
+      "precision_typed": 1,
+      "leak_rate_chars": 0,
+      "f2": 1
+    },
+    "PHONE": {
+      "gold": 268,
+      "hit_overlap": 268,
+      "hit_exact": 268,
+      "predicted": 310,
+      "predicted_tp": 268,
+      "gold_chars": 3567,
+      "covered_chars": 3567,
+      "recall_overlap": 1,
+      "recall_exact": 1,
+      "precision_typed": 0.864516129032258,
+      "leak_rate_chars": 0,
+      "f2": 0.9696092619392185
+    },
+    "SSN": {
+      "gold": 267,
+      "hit_overlap": 267,
+      "hit_exact": 267,
+      "predicted": 267,
+      "predicted_tp": 267,
+      "gold_chars": 2937,
+      "covered_chars": 2937,
+      "recall_overlap": 1,
+      "recall_exact": 1,
+      "precision_typed": 1,
+      "leak_rate_chars": 0,
+      "f2": 1
+    }
+  },
+  "confusion": {
+    "CARD": {
+      "CARD": 314
+    },
+    "EMAIL": {
+      "EMAIL": 346
+    },
+    "IBAN": {
+      "IBAN": 305
+    },
+    "PHONE": {
+      "PHONE": 268
+    },
+    "SSN": {
+      "SSN": 267
+    }
+  },
+  "neutral_regions": 0,
+  "regions": 1548,
+  "regions_tp": 1500,
+  "precision_overall": 0.9689922480620154,
+  "clean_samples": 250,
+  "clean_with_region": 16,
+  "clean_fp_rate": 0.064
+}

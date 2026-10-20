@@ -1,8 +1,11 @@
-# The guardrail block matches the one LLM-Shield-Proxy publishes for LiteLLM 1.99.0
-# (benchmarks/results/http-profile-litellm-1.99.0.md in that repo; see
-# docs/research/recheck-2026-10-20.md), but this repo has not run it yet. Check every
-# key against https://docs.litellm.ai/docs/proxy/guardrails/pii_masking_v2 for
-# the version you pin before publishing numbers from it.
+# Run for results/rivals-*: LiteLLM 1.106.0 (image digest in results/rivals-overhead/images.txt)
+# with the guardrail block below. The block matches the one LLM-Shield-Proxy
+# publishes for LiteLLM 1.99.0 (benchmarks/results/http-profile-litellm-1.99.0.md in
+# that repo; see docs/research/recheck-2026-10-20.md). The docs page for the guardrail
+# (https://docs.litellm.ai/docs/proxy/guardrails/pii_masking_v2) does not say which
+# request fields are scanned or what output_parse_pii does with a stream, so the
+# README reports what was observed, not what was documented. Re-check every key
+# against the docs of the version you pin.
 #
 # Goal: LiteLLM proxy with its Presidio guardrail in front of the mock upstream,
 # configured to mask on the way in and restore on the way out.

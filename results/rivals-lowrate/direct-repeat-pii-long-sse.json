@@ -1,0 +1,65 @@
+{
+  "label": "direct-repeat",
+  "started": "2026-10-20T14:02:46.716166-07:00",
+  "config": {
+    "url": "http://localhost:19000/v1/chat/completions",
+    "rate_rps": 2,
+    "duration_ns": 60000000000,
+    "warmup_ns": 6000000000,
+    "stream": true,
+    "payload": "pii-long",
+    "session_per": 0,
+    "timeout_ns": 30000000000
+  },
+  "env": {
+    "go": "go1.26.3",
+    "os": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "note": "Apple M4 laptop, Docker Desktop VM; proxies in containers, mock on host"
+  },
+  "summary": {
+    "requests": 120,
+    "ok": 120,
+    "errors": 0,
+    "dropped": 0,
+    "achieved_rps": 2,
+    "total_ms": {
+      "n": 120,
+      "mean": 3251.7261583333343,
+      "p50": 3235.078,
+      "p90": 3310.855,
+      "p99": 3361.945,
+      "p99_9": 3363.055,
+      "max": 3363.055
+    },
+    "ttft_ms": {
+      "n": 120,
+      "mean": 152.94629999999998,
+      "p50": 152.667,
+      "p90": 154,
+      "p99": 157.961,
+      "p99_9": 174.73,
+      "max": 174.73
+    },
+    "ttfb_ms": {
+      "n": 120,
+      "mean": 152.80785000000006,
+      "p50": 152.527,
+      "p90": 153.936,
+      "p99": 157.884,
+      "p99_9": 174.645,
+      "max": 174.645
+    },
+    "schedule_lag_ms": {
+      "n": 120,
+      "mean": 0.7753250000000004,
+      "p50": 0.906,
+      "p90": 1.118,
+      "p99": 1.945,
+      "p99_9": 2.293,
+      "max": 2.293
+    },
+    "valid": true
+  }
+}

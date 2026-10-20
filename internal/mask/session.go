@@ -73,10 +73,14 @@ func (s *Session) Tokenize(ctx context.Context, kind detect.Kind, value string) 
 	return tok, nil
 }
 
-// Prefetch allocates tokens for every key concurrently (at most maxPrefetch at
-// a time) so that the masking pass that follows finds them in memory. It
-// returns the first error; the caller must treat that as a failed request.
+// Prefetch allocates tokens for every key so that the masking pass that follows
+// finds them in memory: in one round trip when the vault can batch, otherwise
+// concurrently (at most maxPrefetch calls at a time). It returns the first
+// error; the caller must treat that as a failed request.
 func (s *Session) Prefetch(ctx context.Context, keys []valueKey) error {
+	if b, ok := s.v.(vault.Batcher); ok && b.Batching() {
+		return s.prefetchBatch(ctx, b, keys)
+	}
 	var (
 		wg    sync.WaitGroup
 		sem   = make(chan struct{}, maxPrefetch)
@@ -105,6 +109,31 @@ func (s *Session) Prefetch(ctx context.Context, keys []valueKey) error {
 	}
 	wg.Wait()
 	return first
+}
+
+func (s *Session) prefetchBatch(ctx context.Context, b vault.Batcher, keys []valueKey) error {
+	items := make([]vault.Item, 0, len(keys))
+	s.mu.Lock()
+	for _, k := range keys {
+		if _, known := s.byValue[k]; !known {
+			items = append(items, vault.Item{Kind: k.kind, Value: k.value})
+		}
+	}
+	s.mu.Unlock()
+	if len(items) == 0 {
+		return nil
+	}
+	toks, err := b.TokenizeBatch(ctx, s.id, items)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	for i, it := range items {
+		s.local[toks[i]] = it.Value
+		s.byValue[valueKey{it.Kind, it.Value}] = toks[i]
+	}
+	s.mu.Unlock()
+	return nil
 }
 
 // Restore returns the value behind tok.

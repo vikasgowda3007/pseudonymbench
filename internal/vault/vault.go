@@ -41,6 +41,25 @@ type Vault interface {
 	Close() error
 }
 
+// Item is one value to tokenize.
+type Item struct {
+	Kind  detect.Kind
+	Value string
+}
+
+// Batcher is implemented by vaults that can allocate the tokens of a whole
+// request in one round trip. A caller uses it only when Batching reports true;
+// otherwise concurrent Tokenize calls are the better way to hide latency.
+type Batcher interface {
+	// TokenizeBatch returns one token per item, in order, with the same result
+	// as calling Tokenize for each. Items need not be distinct.
+	TokenizeBatch(ctx context.Context, sid string, items []Item) ([]string, error)
+
+	// Batching reports whether TokenizeBatch is cheaper than concurrent
+	// Tokenize calls on this vault as configured.
+	Batching() bool
+}
+
 // valueIndex returns the lookup key for a value: a keyed hash, so the plaintext
 // never appears as a map key or Redis field name, and so the index of a
 // low-entropy value (SSN, phone) cannot be enumerated without the key.

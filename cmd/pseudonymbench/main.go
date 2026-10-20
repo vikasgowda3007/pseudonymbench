@@ -39,6 +39,7 @@ func run() error {
 		vaultKind = flag.String("vault", env("PSEUDONYMBENCH_VAULT", "memory"), "token vault: memory or redis")
 		redisURL  = flag.String("redis-url", env("PSEUDONYMBENCH_REDIS_URL", "redis://localhost:6379/0"), "Redis URL when -vault=redis")
 		redisLua  = flag.Bool("redis-lua", true, "allocate tokens with one Lua script (about 2.6x faster than the HSETNX sequence on a new value); -redis-lua=false for Redis deployments that forbid scripts")
+		redisPipe = flag.Bool("redis-batch", true, "with Lua allocation, send all of a request's new values to Redis in one pipelined round trip; -redis-batch=false allocates them with concurrent calls")
 		ttl       = flag.Duration("ttl", 15*time.Minute, "vault session lifetime, refreshed on each masked request")
 		policy    = flag.String("policy", env("PSEUDONYMBENCH_POLICY", ""), "per-kind actions, e.g. CARD=block,PHONE=off (kinds: CARD IBAN EMAIL SSN PHONE)")
 		allowURLs = flag.Bool("allow-urls", false, "restore tokens that appear inside URLs (off by default: exfiltration risk)")
@@ -78,7 +79,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		v, err = vault.NewRedis(vault.RedisOptions{Client: redis.NewClient(opts), Sealer: sealer, IndexKey: keys.Index, TTL: *ttl, Lua: *redisLua})
+		v, err = vault.NewRedis(vault.RedisOptions{Client: redis.NewClient(opts), Sealer: sealer, IndexKey: keys.Index, TTL: *ttl, Lua: *redisLua, NoBatch: !*redisPipe})
 		if err != nil {
 			return err
 		}

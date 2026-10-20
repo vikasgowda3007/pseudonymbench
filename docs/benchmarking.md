@@ -75,7 +75,7 @@ other rows.
 
 - It is one machine, usually a laptop with the generator, proxy and mock sharing
   cores. Publish numbers from a quiet Linux host with pinned CPUs.
-- Docker Desktop on macOS adds a virtual-machine layer; these runs do not use Docker.
+- Docker Desktop on macOS adds a virtual-machine layer. The overhead matrix runs natively; the Redis and rival runs use Docker Desktop and say so.
 - It does not measure a real model, a real network or TLS.
 - The Redis row needs a Redis server; the numbers include a localhost round trip.
 
@@ -135,8 +135,8 @@ have licences that forbid redistribution; `gretelai/gretel-pii-masking-en-v1`
 
 `eval fields` plants a distinct canary email in each of 21 request fields,
 sends the request, and checks whether the canary is in the body the upstream
-received: `masked`, `LEAKED`, or `rejected` (the proxy refused, which counts as
-safe). A **no-proxy control** must show all 21 leaking, otherwise the check could
+received: `masked`, `LEAKED`, `dropped` (a top-level key that never reached the
+upstream) or `rejected` (the proxy refused); the last two count as safe. A **no-proxy control** must show all 21 leaking, otherwise the check could
 not tell a masker from a no-op. Run several proxies and `eval merge` their JSON
 into one table.
 
@@ -149,8 +149,43 @@ RIVALS="name=http://host:port/v1/chat/completions" scripts/eval.sh
 ./bin/loadgen -label name -url http://host:port/v1/chat/completions ...
 ```
 
-`bench/rivals/litellm/` has an **untested** template for LiteLLM with its
-Presidio guardrail. Pin versions and read the project's current docs before
-publishing a comparison, and publish the rival's configuration next to its numbers:
-rivals ship different detectors, so overhead is reported "as shipped", not as a
-detection head-to-head.
+`bench/rivals/litellm/` runs LiteLLM with its Presidio guardrail next to this
+proxy, both in containers behind Docker Desktop's network, with the mock on the
+host:
+
+```
+export PSEUDONYMBENCH_KEY=$(openssl rand -hex 32)
+docker compose -f bench/rivals/litellm/docker-compose.yml up -d --build
+scripts/rivals.sh                                   # detection, field matrix, overhead at 10 req/s
+DATA=data/nemotron-pii.jsonl MODE=eval scripts/rivals.sh
+```
+
+Things that went wrong or needed care when this was first run, so they do not
+catch the next person:
+
+- **Pin the images.** `scripts/rivals.sh` writes the digests it ran to
+  `images.txt`. The compose file uses moving tags.
+- **The canary must look like an email to the rival's detector.** Presidio
+  validates top-level domains, so a `.test` canary made LiteLLM look like it
+  leaked fields it had simply not recognised; the canary uses `example.com`.
+  A "LEAKED" cell means the canary reached the upstream, which for a
+  recogniser-based rival can also mean "not recognised as PII".
+- **"masked" is not proof for a proxy that may drop a field.** LiteLLM did not
+  forward `user` or `metadata` to the upstream in this configuration, so those
+  cells first read "masked". The matrix now reports `dropped` when a top-level key
+  the client sent is missing from the upstream body (counted as not leaked, listed
+  separately). Fields inside messages cannot be told apart this way.
+- **Exact-span scores are meaningless for a rival that rewrites whitespace.**
+  LiteLLM removes the space after a placeholder; read overlap recall.
+- **The stock Presidio analyzer runs one worker.** At 10 req/s it saturates on
+  the longer payload, so the comparison also has a low-rate run that separates
+  buffering from saturation (`MODE=lowrate scripts/rivals.sh`).
+- **Attribute a rival's behaviour before you describe it.** LiteLLM's buffered stream
+  was checked three ways with the mock at 150 ms prefill (3 requests each): no
+  guardrail, first byte 0.17 s; guardrail with `output_parse_pii: false`, 3.4 s;
+  guardrail with `output_parse_pii: true`, 3.3 to 4.0 s.
+- **Rivals ship different detectors**, so overhead is reported "as shipped" and
+  detection is not a head-to-head: Presidio masks names, addresses and dates
+  that this proxy does not look for.
+
+Publish the rival's configuration next to its numbers (`config.yaml` is the one used).

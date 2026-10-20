@@ -1,7 +1,9 @@
 package eval
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -232,6 +234,48 @@ func TestFieldMatrix(t *testing.T) {
 	md := FieldsMarkdown([]FieldReport{masked, control})
 	if !strings.Contains(md, "| no proxy |") || !strings.Contains(md, "no proxy 21/21") {
 		t.Errorf("matrix markdown:\n%s", md)
+	}
+}
+
+// A proxy that deletes a field is not leaking it, but it has not masked it
+// either; the matrix must say which.
+func TestFieldMatrixSeparatesDroppedFromMasked(t *testing.T) {
+	up := newRecorder(t)
+	px := proxyFor(t, up, nil)
+	dropper := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		json.Unmarshal(body, &m)
+		delete(m, "user")
+		delete(m, "metadata")
+		out, _ := json.Marshal(m)
+		req, _ := http.NewRequest(http.MethodPost, px.URL+r.URL.Path, bytes.NewReader(out))
+		req.Header = r.Header.Clone()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	}))
+	defer dropper.Close()
+
+	rep := RunFields(context.Background(), Target{URL: dropper.URL + "/v1/chat/completions", MockURL: up.URL}, "d", "dropper")
+	dropped := map[string]bool{"user": true, "metadata-value": true, "metadata-key": true}
+	for _, r := range rep.Results {
+		want := Masked
+		if dropped[r.ID] {
+			want = Dropped
+		}
+		if r.Outcome != want {
+			t.Errorf("field %q: %s, want %s", r.Field, r.Outcome, want)
+		}
+	}
+	md := FieldsMarkdown([]FieldReport{rep})
+	if !strings.Contains(md, "dropper 0/21") || !strings.Contains(md, "removed instead of masking") || !strings.Contains(md, "dropper 3") {
+		t.Errorf("markdown:\n%s", md)
 	}
 }
 

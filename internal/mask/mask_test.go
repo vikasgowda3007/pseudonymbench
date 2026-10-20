@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -453,6 +454,83 @@ func TestPrefetchFailsClosed(t *testing.T) {
 	sr := &slowRemote{Vault: v, delay: time.Millisecond}
 	_, _, err := New(nil).Request(ctx, NewSession(sr, "s1"),
 		[]byte(`{"messages":[{"role":"user","content":"a@x.co b@x.co c@x.co d@x.co e@x.co"}]}`))
+	if !errors.Is(err, vault.ErrSessionFull) {
+		t.Fatalf("err = %v, want ErrSessionFull", err)
+	}
+}
+
+// batchRemote is a remote vault that can allocate a whole request's tokens in
+// one call, and counts how it was used.
+type batchRemote struct {
+	vault.Vault
+	batches, singles atomic.Int64
+	fail             error
+}
+
+func (b *batchRemote) Remote() bool   { return true }
+func (b *batchRemote) Batching() bool { return true }
+
+func (b *batchRemote) Tokenize(ctx context.Context, sid string, kind detect.Kind, value string) (string, error) {
+	b.singles.Add(1)
+	return b.Vault.Tokenize(ctx, sid, kind, value)
+}
+
+func (b *batchRemote) TokenizeBatch(ctx context.Context, sid string, items []vault.Item) ([]string, error) {
+	b.batches.Add(1)
+	if b.fail != nil {
+		return nil, b.fail
+	}
+	out := make([]string, len(items))
+	for i, it := range items {
+		tok, err := b.Vault.Tokenize(ctx, sid, it.Kind, it.Value)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = tok
+	}
+	return out, nil
+}
+
+// A vault that batches gets one call per request, and masking then finds every
+// token in the session's memory.
+func TestBatchingVaultGetsOneCall(t *testing.T) {
+	br := &batchRemote{Vault: vault.NewMemory(vault.MemoryOptions{})}
+	sess := NewSession(br, "s1")
+	var content strings.Builder
+	for i := 0; i < 24; i++ {
+		fmt.Fprintf(&content, "mail user%d@acme.com ", i)
+	}
+	content.WriteString("again user3@acme.com")
+	body := `{"messages":[{"role":"user","content":"` + content.String() + `"}]}`
+	out, rep, err := New(nil).Request(ctx, sess, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if br.batches.Load() != 1 || br.singles.Load() != 0 {
+		t.Errorf("%d batch calls and %d single calls, want 1 and 0", br.batches.Load(), br.singles.Load())
+	}
+	if rep.Masked[detect.Email] != 25 || strings.Contains(string(out), "@acme.com") {
+		t.Fatalf("masking incomplete: %v\n%s", rep.Masked, out)
+	}
+	for _, tok := range token.Pattern.FindAllString(string(out), -1) {
+		if v, ok, _ := sess.Restore(ctx, tok); !ok || !strings.HasSuffix(v, "@acme.com") {
+			t.Errorf("token %s restores %q (%v)", tok, v, ok)
+		}
+	}
+	// A second request in the same session sends only values it has not seen.
+	before := br.batches.Load()
+	if _, _, err := New(nil).Request(ctx, sess, []byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	if br.batches.Load() != before {
+		t.Error("values the session already held went to the vault again")
+	}
+}
+
+func TestBatchFailureFailsClosed(t *testing.T) {
+	br := &batchRemote{Vault: vault.NewMemory(vault.MemoryOptions{}), fail: vault.ErrSessionFull}
+	_, _, err := New(nil).Request(ctx, NewSession(br, "s1"),
+		[]byte(`{"messages":[{"role":"user","content":"a@x.co b@x.co"}]}`))
 	if !errors.Is(err, vault.ErrSessionFull) {
 		t.Fatalf("err = %v, want ErrSessionFull", err)
 	}

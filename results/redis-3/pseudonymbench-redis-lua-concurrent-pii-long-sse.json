@@ -1,0 +1,65 @@
+{
+  "label": "pseudonymbench-redis-lua-concurrent",
+  "started": "2026-10-20T14:39:25.681485-07:00",
+  "config": {
+    "url": "http://localhost:18084/v1/chat/completions",
+    "rate_rps": 100,
+    "duration_ns": 25000000000,
+    "warmup_ns": 5000000000,
+    "stream": true,
+    "payload": "pii-long",
+    "session_per": 0,
+    "timeout_ns": 30000000000
+  },
+  "env": {
+    "go": "go1.26.3",
+    "os": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "note": "Apple M4, macOS 26.6, Go go1.26.3; Redis 7.4 in Docker Desktop 29.8 (10 CPUs, 8 GB VM); proxy, mock, generator native"
+  },
+  "summary": {
+    "requests": 2500,
+    "ok": 2500,
+    "errors": 0,
+    "dropped": 0,
+    "achieved_rps": 100,
+    "total_ms": {
+      "n": 2500,
+      "mean": 3150.980187199987,
+      "p50": 3099.931,
+      "p90": 3349.003,
+      "p99": 3413.884,
+      "p99_9": 3455.148,
+      "max": 3478.362
+    },
+    "ttft_ms": {
+      "n": 2500,
+      "mean": 159.49919240000006,
+      "p50": 155.022,
+      "p90": 157.449,
+      "p99": 311.35,
+      "p99_9": 478.358,
+      "max": 504.144
+    },
+    "ttfb_ms": {
+      "n": 2500,
+      "mean": 159.30536719999986,
+      "p50": 154.992,
+      "p90": 157.415,
+      "p99": 311.277,
+      "p99_9": 478.252,
+      "max": 504.118
+    },
+    "schedule_lag_ms": {
+      "n": 2500,
+      "mean": 0.5543012000000004,
+      "p50": 0.201,
+      "p90": 0.666,
+      "p99": 4.443,
+      "p99_9": 74.81,
+      "max": 89.533
+    },
+    "valid": true
+  }
+}

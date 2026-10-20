@@ -29,16 +29,19 @@ func BenchmarkRequestRedis(b *testing.B) {
 		for i := range bodies {
 			bodies[i], _ = g.ChatBody(payload, false)
 		}
-		for _, lua := range []bool{false, true} {
+		for _, mode := range []struct {
+			name         string
+			lua, noBatch bool
+		}{{"hsetnx", false, false}, {"lua-concurrent", true, true}, {"lua-pipelined", true, false}} {
 			sealer, _ := vault.NewSealer(vault.GenerateKey())
 			prefix := fmt.Sprintf("pbbench%d", time.Now().UnixNano())
 			v, err := vault.NewRedis(vault.RedisOptions{Client: client, Sealer: sealer, IndexKey: vault.GenerateKey(),
-				TTL: time.Minute, Prefix: prefix, Lua: lua})
+				TTL: time.Minute, Prefix: prefix, Lua: mode.lua, NoBatch: mode.noBatch})
 			if err != nil {
 				b.Fatal(err)
 			}
 			var n atomic.Int64
-			b.Run(fmt.Sprintf("%s/lua=%v", payload, lua), func(b *testing.B) {
+			b.Run(payload+"/"+mode.name, func(b *testing.B) {
 				m := New(nil)
 				for i := 0; i < b.N; i++ {
 					sid := fmt.Sprintf("s%d", n.Add(1))

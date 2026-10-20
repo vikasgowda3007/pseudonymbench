@@ -1,0 +1,65 @@
+{
+  "label": "litellm-presidio",
+  "started": "2026-10-20T07:56:00.975241-07:00",
+  "config": {
+    "url": "http://localhost:4000/v1/chat/completions",
+    "rate_rps": 10,
+    "duration_ns": 40000000000,
+    "warmup_ns": 5000000000,
+    "stream": true,
+    "payload": "pii-long",
+    "session_per": 0,
+    "timeout_ns": 30000000000
+  },
+  "env": {
+    "go": "go1.26.3",
+    "os": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "note": "Apple M4, macOS 26.6, Docker Desktop 29.8 (10 CPUs, 8 GB VM); pseudonymbench, LiteLLM, Presidio in containers; mock and load generator native on the host"
+  },
+  "summary": {
+    "requests": 400,
+    "ok": 400,
+    "errors": 0,
+    "dropped": 0,
+    "achieved_rps": 10,
+    "total_ms": {
+      "n": 400,
+      "mean": 6084.960007500004,
+      "p50": 6372.875,
+      "p90": 8068.157,
+      "p99": 8718.366,
+      "p99_9": 8816.586,
+      "max": 8816.586
+    },
+    "ttft_ms": {
+      "n": 400,
+      "mean": 6084.959407500003,
+      "p50": 6372.875,
+      "p90": 8068.157,
+      "p99": 8718.365,
+      "p99_9": 8816.585,
+      "max": 8816.585
+    },
+    "ttfb_ms": {
+      "n": 400,
+      "mean": 6084.869122499998,
+      "p50": 6372.796,
+      "p90": 8068.101,
+      "p99": 8718.224,
+      "p99_9": 8816.46,
+      "max": 8816.46
+    },
+    "schedule_lag_ms": {
+      "n": 400,
+      "mean": 1.3365625000000005,
+      "p50": 1.546,
+      "p90": 2.086,
+      "p99": 2.101,
+      "p99_9": 2.693,
+      "max": 2.693
+    },
+    "valid": true
+  }
+}

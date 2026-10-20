@@ -1,0 +1,105 @@
+{
+  "label": "Presidio analyzer alone, score \u003e= 0, synthetic 2000",
+  "samples": 2000,
+  "errors": 0,
+  "kinds": {
+    "CARD": {
+      "gold": 614,
+      "hit_overlap": 561,
+      "hit_exact": 529,
+      "predicted": 524,
+      "predicted_tp": 510,
+      "gold_chars": 10687,
+      "covered_chars": 9485,
+      "recall_overlap": 0.9136807817589576,
+      "recall_exact": 0.8615635179153095,
+      "precision_typed": 0.9732824427480916,
+      "leak_rate_chars": 0.11247309815663886,
+      "f2": 0.9250098931539373
+    },
+    "EMAIL": {
+      "gold": 637,
+      "hit_overlap": 637,
+      "hit_exact": 637,
+      "predicted": 637,
+      "predicted_tp": 637,
+      "gold_chars": 14502,
+      "covered_chars": 14502,
+      "recall_overlap": 1,
+      "recall_exact": 1,
+      "precision_typed": 1,
+      "leak_rate_chars": 0,
+      "f2": 1
+    },
+    "IBAN": {
+      "gold": 606,
+      "hit_overlap": 606,
+      "hit_exact": 602,
+      "predicted": 606,
+      "predicted_tp": 606,
+      "gold_chars": 13601,
+      "covered_chars": 13601,
+      "recall_overlap": 1,
+      "recall_exact": 0.9933993399339934,
+      "precision_typed": 1,
+      "leak_rate_chars": 0,
+      "f2": 1
+    },
+    "PHONE": {
+      "gold": 551,
+      "hit_overlap": 455,
+      "hit_exact": 442,
+      "predicted": 699,
+      "predicted_tp": 441,
+      "gold_chars": 7368,
+      "covered_chars": 5955,
+      "recall_overlap": 0.8257713248638838,
+      "recall_exact": 0.8021778584392014,
+      "precision_typed": 0.630901287553648,
+      "leak_rate_chars": 0.1917752442996743,
+      "f2": 0.7777271321362874
+    },
+    "SSN": {
+      "gold": 568,
+      "hit_overlap": 568,
+      "hit_exact": 568,
+      "predicted": 783,
+      "predicted_tp": 568,
+      "gold_chars": 6248,
+      "covered_chars": 6248,
+      "recall_overlap": 1,
+      "recall_exact": 1,
+      "precision_typed": 0.7254150702426565,
+      "leak_rate_chars": 0,
+      "f2": 0.9296235679214403
+    }
+  },
+  "confusion": {
+    "CARD": {
+      "CARD": 510,
+      "MISSED": 53,
+      "UNTYPED": 51
+    },
+    "EMAIL": {
+      "EMAIL": 637
+    },
+    "IBAN": {
+      "IBAN": 606
+    },
+    "PHONE": {
+      "MISSED": 96,
+      "PHONE": 441,
+      "UNTYPED": 14
+    },
+    "SSN": {
+      "SSN": 568
+    }
+  },
+  "neutral_regions": 0,
+  "regions": 5336,
+  "regions_tp": 2828,
+  "precision_overall": 0.5299850074962519,
+  "clean_samples": 500,
+  "clean_with_region": 444,
+  "clean_fp_rate": 0.888
+}

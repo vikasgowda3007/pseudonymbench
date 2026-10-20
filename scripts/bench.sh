@@ -4,7 +4,7 @@
 #
 #   scripts/bench.sh                     # defaults below
 #   RATE=200 DURATION=60s scripts/bench.sh
-#   REDIS_URL=redis://localhost:6379/0 scripts/bench.sh   # adds Redis-vault rows (HSETNX and Lua)
+#   REDIS_URL=redis://localhost:6379/0 scripts/bench.sh   # adds Redis-vault rows (HSETNX, Lua with concurrent calls, Lua pipelined)
 #
 # Results go to results/<RUN>/ as JSON plus REPORT.md. Numbers from a laptop
 # are for checking the harness, not for publishing: see the README.
@@ -21,6 +21,7 @@ MOCK_PORT=${MOCK_PORT:-19000}
 PROXY_PORT=${PROXY_PORT:-18080}
 REDIS_PROXY_PORT=${REDIS_PROXY_PORT:-18081}
 REDIS_LUA_PROXY_PORT=${REDIS_LUA_PROXY_PORT:-18082}
+REDIS_LUA_SINGLE_PORT=${REDIS_LUA_SINGLE_PORT:-18084}
 # Mock model timing: 150 ms prefill, 12 ms per 4-byte chunk, 240 chunks. The reply is
 # padded to a fixed 960 bytes so it cannot differ between direct and proxied runs;
 # the mock counts replies whose echo overflowed that, and this script checks it.
@@ -59,6 +60,10 @@ if [[ -n "${REDIS_URL:-}" ]]; then
     -vault redis -redis-url "$REDIS_URL" -redis-lua=true >"$OUT/proxy-redis-lua.log" 2>&1 &
   pids+=($!)
   wait_for "http://localhost:$REDIS_LUA_PROXY_PORT/healthz"
+  ./bin/pseudonymbench -listen ":$REDIS_LUA_SINGLE_PORT" -upstream "http://localhost:$MOCK_PORT" -audit off \
+    -vault redis -redis-url "$REDIS_URL" -redis-lua=true -redis-batch=false >"$OUT/proxy-redis-lua-single.log" 2>&1 &
+  pids+=($!)
+  wait_for "http://localhost:$REDIS_LUA_SINGLE_PORT/healthz"
 fi
 
 run() { # label url payload stream
@@ -75,6 +80,7 @@ for payload in $PAYLOADS; do
     run pseudonymbench  "http://localhost:$PROXY_PORT" "$payload" "$stream"
     if [[ -n "${REDIS_URL:-}" ]]; then
       run pseudonymbench-redis-hsetnx "http://localhost:$REDIS_PROXY_PORT"      "$payload" "$stream"
+      run pseudonymbench-redis-lua-concurrent "http://localhost:$REDIS_LUA_SINGLE_PORT" "$payload" "$stream"
       run pseudonymbench-redis-lua "http://localhost:$REDIS_LUA_PROXY_PORT"  "$payload" "$stream"
     fi
     # A second baseline run: its delta against the first is the noise floor.

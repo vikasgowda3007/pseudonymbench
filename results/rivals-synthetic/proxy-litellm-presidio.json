@@ -1,0 +1,106 @@
+{
+  "label": "litellm-presidio",
+  "samples": 1000,
+  "errors": 0,
+  "kinds": {
+    "CARD": {
+      "gold": 314,
+      "hit_overlap": 284,
+      "hit_exact": 174,
+      "predicted": 265,
+      "predicted_tp": 259,
+      "gold_chars": 5469,
+      "covered_chars": 4547,
+      "recall_overlap": 0.9044585987261147,
+      "recall_exact": 0.554140127388535,
+      "precision_typed": 0.9773584905660377,
+      "leak_rate_chars": 0.16858657889925033,
+      "f2": 0.9181554008847526
+    },
+    "EMAIL": {
+      "gold": 346,
+      "hit_overlap": 346,
+      "hit_exact": 98,
+      "predicted": 346,
+      "predicted_tp": 346,
+      "gold_chars": 7961,
+      "covered_chars": 7961,
+      "recall_overlap": 1,
+      "recall_exact": 0.2832369942196532,
+      "precision_typed": 1,
+      "leak_rate_chars": 0,
+      "f2": 1
+    },
+    "IBAN": {
+      "gold": 305,
+      "hit_overlap": 305,
+      "hit_exact": 240,
+      "predicted": 305,
+      "predicted_tp": 305,
+      "gold_chars": 6847,
+      "covered_chars": 6691,
+      "recall_overlap": 1,
+      "recall_exact": 0.7868852459016393,
+      "precision_typed": 1,
+      "leak_rate_chars": 0.022783700890901093,
+      "f2": 1
+    },
+    "PHONE": {
+      "gold": 268,
+      "hit_overlap": 224,
+      "hit_exact": 211,
+      "predicted": 238,
+      "predicted_tp": 205,
+      "gold_chars": 3567,
+      "covered_chars": 2916,
+      "recall_overlap": 0.835820895522388,
+      "recall_exact": 0.7873134328358209,
+      "precision_typed": 0.8613445378151261,
+      "leak_rate_chars": 0.18250630782169885,
+      "f2": 0.8408038905490128
+    },
+    "SSN": {
+      "gold": 267,
+      "hit_overlap": 267,
+      "hit_exact": 263,
+      "predicted": 277,
+      "predicted_tp": 261,
+      "gold_chars": 2937,
+      "covered_chars": 2937,
+      "recall_overlap": 1,
+      "recall_exact": 0.9850187265917603,
+      "precision_typed": 0.9422382671480144,
+      "leak_rate_chars": 0,
+      "f2": 0.9878879636638909
+    }
+  },
+  "confusion": {
+    "CARD": {
+      "CARD": 259,
+      "MISSED": 30,
+      "UNTYPED": 25
+    },
+    "EMAIL": {
+      "EMAIL": 346
+    },
+    "IBAN": {
+      "IBAN": 305
+    },
+    "PHONE": {
+      "MISSED": 44,
+      "PHONE": 205,
+      "UNTYPED": 19
+    },
+    "SSN": {
+      "SSN": 261,
+      "UNTYPED": 6
+    }
+  },
+  "neutral_regions": 0,
+  "regions": 2676,
+  "regions_tp": 1427,
+  "precision_overall": 0.5332585949177877,
+  "clean_samples": 250,
+  "clean_with_region": 224,
+  "clean_fp_rate": 0.896
+}

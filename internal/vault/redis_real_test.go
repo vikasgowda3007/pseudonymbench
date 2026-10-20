@@ -142,6 +142,53 @@ func TestRealRedisContract(t *testing.T) {
 	}
 }
 
+// The pipelined batch against a real server: same tokens as single calls,
+// duplicates collapse, cap and TTL hold, and a flushed script cache recovers.
+func TestRealRedisBatch(t *testing.T) {
+	v := realVault(t, true, 30*time.Second, 6, nil)
+	items := []Item{
+		{detect.Email, "a@acme.com"}, {detect.Email, "b@acme.com"}, {detect.Phone, "415-555-2671"},
+		{detect.Email, "a@acme.com"},
+	}
+	toks, err := v.TokenizeBatch(ctx, "s1", items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toks[0] != toks[3] || toks[0] == toks[1] {
+		t.Errorf("tokens = %v", toks)
+	}
+	for i, it := range items {
+		if got, ok, _ := v.Restore(ctx, "s1", toks[i]); !ok || got != it.Value {
+			t.Errorf("item %d restores %q (%v)", i, got, ok)
+		}
+		if again, _ := v.Tokenize(ctx, "s1", it.Kind, it.Value); again != toks[i] {
+			t.Errorf("item %d: Tokenize says %s, batch said %s", i, again, toks[i])
+		}
+	}
+	t2v, v2t := v.keys("s1")
+	for _, k := range []string{t2v, v2t} {
+		if ttl := v.o.Client.TTL(ctx, k).Val(); ttl <= 0 {
+			t.Errorf("%s has TTL %v", k, ttl)
+		}
+	}
+	if err := v.o.Client.ScriptFlush(ctx).Err(); err != nil {
+		t.Skipf("cannot flush the script cache here: %v", err)
+	}
+	again, err := v.TokenizeBatch(ctx, "s1", items)
+	if err != nil {
+		t.Fatalf("after SCRIPT FLUSH: %v", err)
+	}
+	for i := range again {
+		if again[i] != toks[i] {
+			t.Errorf("item %d changed token across the flush", i)
+		}
+	}
+	// 3 distinct values so far; 4 more would make 7 > cap 6.
+	if _, err := v.TokenizeBatch(ctx, "s1", emails(4)); err != ErrSessionFull {
+		t.Errorf("err = %v, want ErrSessionFull", err)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {
@@ -149,6 +196,49 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// BenchmarkRedisBatch compares allocating the values of one request with
+// concurrent single calls (what masking did before batching) against one
+// pipelined batch, for a few request sizes. Each iteration uses a fresh session.
+func BenchmarkRedisBatch(b *testing.B) {
+	for _, n := range []int{5, 20, 60} {
+		items := emails(n)
+		b.Run(fmt.Sprintf("n=%d/concurrent", n), func(b *testing.B) {
+			v := realVault(b, true, time.Minute, 1<<30, nil)
+			var seq atomic.Int64
+			for i := 0; i < b.N; i++ {
+				sid := fmt.Sprintf("s%d", seq.Add(1))
+				sem := make(chan struct{}, 16)
+				done := make(chan error, n)
+				for _, it := range items {
+					sem <- struct{}{}
+					go func(it Item) {
+						_, err := v.Tokenize(ctx, sid, it.Kind, it.Value)
+						<-sem
+						done <- err
+					}(it)
+				}
+				for range items {
+					if err := <-done; err != nil {
+						b.Fatal(err)
+					}
+				}
+				v.Forget(ctx, sid)
+			}
+		})
+		b.Run(fmt.Sprintf("n=%d/pipelined", n), func(b *testing.B) {
+			v := realVault(b, true, time.Minute, 1<<30, nil)
+			var seq atomic.Int64
+			for i := 0; i < b.N; i++ {
+				sid := fmt.Sprintf("s%d", seq.Add(1))
+				if _, err := v.TokenizeBatch(ctx, sid, items); err != nil {
+					b.Fatal(err)
+				}
+				v.Forget(ctx, sid)
+			}
+		})
+	}
 }
 
 // BenchmarkRedisTokenize compares the two allocation strategies on a real
