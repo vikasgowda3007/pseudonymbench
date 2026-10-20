@@ -7,6 +7,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -143,6 +144,11 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request, rec *record) {
 	}
 	rec.session = shortHash(sid)
 	sess := mask.NewSession(h.cfg.Vault, sid)
+	if r.Header.Get(SessionHeader) == "" {
+		// A per-request session can never be looked up again: drop it once the
+		// response (including a whole stream) is done, instead of at the TTL.
+		defer h.cfg.Vault.Forget(context.Background(), sid)
+	}
 
 	t0 := time.Now()
 	masked, rep, err := h.cfg.Masker.Request(r.Context(), sess, body)

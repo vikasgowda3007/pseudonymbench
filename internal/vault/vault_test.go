@@ -295,3 +295,27 @@ func TestParseKey(t *testing.T) {
 		t.Error("garbage key accepted")
 	}
 }
+
+func TestForget(t *testing.T) {
+	eachBackend(t, func(t *testing.T, b backend) {
+		v, _ := b.make(t, time.Minute, nil)
+		tok, _ := v.Tokenize(ctx, "s1", detect.Email, "a@acme.com")
+		other, _ := v.Tokenize(ctx, "s2", detect.Email, "a@acme.com")
+		if err := v.Forget(ctx, "s1"); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, _ := v.Restore(ctx, "s1", tok); ok {
+			t.Error("token restored after Forget")
+		}
+		if _, ok, _ := v.Restore(ctx, "s2", other); !ok {
+			t.Error("Forget removed another session")
+		}
+		if err := v.Forget(ctx, "never-existed"); err != nil {
+			t.Errorf("Forget of an unknown session: %v", err)
+		}
+		// The session can be used again afterwards.
+		if _, err := v.Tokenize(ctx, "s1", detect.Email, "a@acme.com"); err != nil {
+			t.Errorf("Tokenize after Forget: %v", err)
+		}
+	})
+}

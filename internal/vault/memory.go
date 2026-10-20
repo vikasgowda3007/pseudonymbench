@@ -101,6 +101,13 @@ func (m *Memory) Restore(_ context.Context, sid, tok string) (string, bool, erro
 	return v, ok, nil
 }
 
+func (m *Memory) Forget(_ context.Context, sid string) error {
+	m.mu.Lock()
+	delete(m.sessions, sid)
+	m.mu.Unlock()
+	return nil
+}
+
 func (m *Memory) Close() error { return nil }
 
 // sweep drops expired sessions, at most once per half TTL. Caller holds mu.

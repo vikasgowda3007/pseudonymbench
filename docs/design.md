@@ -178,7 +178,9 @@ and keeps values unencrypted in process memory.
 ## Sessions
 
 - No `X-Pseudonym-Session` header: every request is its own session (random id).
-  Tokens for the same value differ between requests.
+  Tokens for the same value differ between requests, and the session is deleted
+  (`Vault.Forget`) as soon as the response, or the whole stream, is done, so
+  sessionless traffic does not pile up in the vault until the TTL.
 - With the header: `sid = HMAC(sessionKey, sha256(Authorization) || 0 || header)`.
   Two callers using the same session name, or an attacker who guesses a name,
   land in different vault sessions.

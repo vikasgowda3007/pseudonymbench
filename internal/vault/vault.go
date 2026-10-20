@@ -33,6 +33,11 @@ type Vault interface {
 	// token is unknown in that session, which includes tokens from other sessions.
 	Restore(ctx context.Context, sid, tok string) (value string, ok bool, err error)
 
+	// Forget deletes a session and everything in it. The proxy calls it for
+	// requests that sent no session header, whose tokens nobody can ever look
+	// up again, so they do not sit in the vault until the TTL.
+	Forget(ctx context.Context, sid string) error
+
 	Close() error
 }
 

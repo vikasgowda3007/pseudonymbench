@@ -130,4 +130,9 @@ func (r *Redis) Restore(ctx context.Context, sid, tok string) (string, bool, err
 	return v, true, nil
 }
 
+func (r *Redis) Forget(ctx context.Context, sid string) error {
+	t2v, v2t := r.keys(sid)
+	return r.o.Client.Del(ctx, t2v, v2t).Err()
+}
+
 func (r *Redis) Close() error { return r.o.Client.Close() }

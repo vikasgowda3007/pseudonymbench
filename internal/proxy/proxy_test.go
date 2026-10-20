@@ -648,3 +648,27 @@ func TestCleanRequestIsForwardedByteForByte(t *testing.T) {
 		t.Error("PII forwarded")
 	}
 }
+
+// A request without a session header gets a private session that nobody can
+// reach again, so it must not linger in the vault.
+func TestPerRequestSessionsAreForgotten(t *testing.T) {
+	up := newUpstream(t, echoSSE(5))
+	rg := newRig(t, up, nil)
+	for _, streaming := range []bool{false, true} {
+		resp := post(t, rg, chatBody("mail john@acme.com", streaming), nil)
+		io.Copy(io.Discard, resp.Body)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for rg.vault.Sessions() != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := rg.vault.Sessions(); n != 0 {
+		t.Errorf("%d per-request sessions still in the vault", n)
+	}
+	// With a session header the session is kept for the next turn.
+	post(t, rg, chatBody("mail john@acme.com", false), map[string]string{SessionHeader: "keep"}).Body.Close()
+	time.Sleep(50 * time.Millisecond)
+	if n := rg.vault.Sessions(); n != 1 {
+		t.Errorf("sessions = %d, want 1 for the named session", n)
+	}
+}
