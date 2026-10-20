@@ -3,6 +3,7 @@
 //	eval gen      -n 2000 -seed 1 -out data/synthetic.jsonl
 //	eval detector -data data/synthetic.jsonl
 //	eval proxy    -data data/synthetic.jsonl -target URL -mock URL -label NAME
+//	eval presidio -data data/synthetic.jsonl -url http://localhost:5002   (needs a Presidio analyzer)
 //	eval fields   -target URL -mock URL -label NAME -out results/fields-NAME.json
 //	eval merge    results/fields-*.json
 //
@@ -37,6 +38,8 @@ func main() {
 		err = cmdDetector(os.Args[2:])
 	case "proxy":
 		err = cmdProxy(os.Args[2:])
+	case "presidio":
+		err = cmdPresidio(os.Args[2:])
 	case "fields":
 		err = cmdFields(os.Args[2:])
 	case "merge":
@@ -51,7 +54,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: eval gen|detector|proxy|fields|merge [flags]  (run a subcommand with -h)")
+	fmt.Fprintln(os.Stderr, "usage: eval gen|detector|proxy|presidio|fields|merge [flags]  (run a subcommand with -h)")
 	os.Exit(2)
 }
 
@@ -112,6 +115,30 @@ func cmdProxy(args []string) error {
 	runID := fmt.Sprintf("p%d", time.Now().UnixNano())
 	preds, errs := eval.RunProxy(context.Background(), t, runID, samples)
 	return emit(eval.Score(*label, samples, preds, errs), *out)
+}
+
+func cmdPresidio(args []string) error {
+	fs := flag.NewFlagSet("presidio", flag.ExitOnError)
+	data := fs.String("data", "data/synthetic.jsonl", "labelled JSONL")
+	url := fs.String("url", "http://localhost:5002", "Presidio analyzer base URL")
+	score := fs.Float64("score", 0.4, "minimum score to count a result")
+	label := fs.String("label", "Presidio analyzer", "name in the report")
+	conc := fs.Int("c", 8, "concurrent requests")
+	out := fs.String("out", "", "write the report JSON here")
+	misses := fs.Int("misses", 0, "also print up to this many missed gold spans per kind (public or synthetic data only)")
+	fs.Parse(args)
+	samples, err := eval.LoadJSONL(*data)
+	if err != nil {
+		return err
+	}
+	preds, errs := eval.PresidioRegions(context.Background(), *url, *score, *conc, samples)
+	if err := emit(eval.Score(*label, samples, preds, errs), *out); err != nil {
+		return err
+	}
+	if *misses > 0 {
+		fmt.Print(eval.Diagnose(samples, preds, *misses))
+	}
+	return nil
 }
 
 func cmdFields(args []string) error {

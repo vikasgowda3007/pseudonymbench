@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -242,5 +243,50 @@ func TestFieldMatrixReportsRejection(t *testing.T) {
 		if r.Outcome != Rejected {
 			t.Errorf("field %q: %s, want rejected", r.Field, r.Outcome)
 		}
+	}
+}
+
+func TestPresidioRegions(t *testing.T) {
+	// A fake analyzer: reports an email (character offsets, after multi-byte
+	// text), the same span again under another type, and a person.
+	text := "Zoë wrote to a@b.co about Anna"
+	start := len([]rune("Zoë wrote to "))
+	analyzer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/analyze" || r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"language":"en"`) || !strings.Contains(string(body), `"score_threshold":0.4`) {
+			t.Errorf("request body = %s", body)
+		}
+		fmt.Fprintf(w, `[{"entity_type":"EMAIL_ADDRESS","start":%d,"end":%d,"score":1.0},`+
+			`{"entity_type":"URL","start":%d,"end":%d,"score":0.5},`+
+			`{"entity_type":"PERSON","start":%d,"end":%d,"score":0.85},`+
+			`{"entity_type":"DATE_TIME","start":0,"end":3,"score":0.2}]`,
+			start, start+6, start, start+6, len([]rune(text))-4, len([]rune(text)))
+	}))
+	defer analyzer.Close()
+
+	samples := []synth.Sample{{Text: text}}
+	preds, errs := PresidioRegions(context.Background(), analyzer.URL, 0.4, 2, samples)
+	if errs[0] || len(preds[0]) != 2 {
+		t.Fatalf("errs %v preds %+v", errs, preds)
+	}
+	em := preds[0][0]
+	if text[em.Start:em.End] != "a@b.co" || len(em.Kinds) != 1 || em.Kinds[0] != detect.Email {
+		t.Errorf("email region = %q %v", text[em.Start:em.End], em.Kinds)
+	}
+	if p := preds[0][1]; text[p.Start:p.End] != "Anna" || len(p.Kinds) != 0 {
+		t.Errorf("person region = %q %v", text[p.Start:p.End], p.Kinds)
+	}
+}
+
+func TestPresidioRegionsReportsErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(500) }))
+	defer srv.Close()
+	_, errs := PresidioRegions(context.Background(), srv.URL, 0, 1, []synth.Sample{{Text: "x"}})
+	if !errs[0] {
+		t.Error("a 500 from the analyzer should count as an error")
 	}
 }

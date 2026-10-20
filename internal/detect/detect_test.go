@@ -43,6 +43,8 @@ func TestFind(t *testing.T) {
 		{"ssn area 000", "000-12-3456", nil},
 		{"ssn area 666", "666-12-3456", nil},
 		{"ssn area 9xx", "900-12-3456", nil},
+		{"itin shape 7x", "912-70-1234", []string{"SSN:912-70-1234"}},
+		{"itin shape 8x", "987 88 4321", []string{"SSN:987 88 4321"}},
 		{"ssn group 00", "123-00-6789", nil},
 		{"ssn serial 0000", "123-45-0000", nil},
 		{"ssn mixed separators", "123-45 6789", nil},
@@ -170,6 +172,37 @@ func FuzzFind(f *testing.F) {
 			prev = m.End
 		}
 	})
+}
+
+// The profile prefilter must never change what Find returns.
+func FuzzPrefilterIsInvisible(f *testing.F) {
+	for _, s := range []string{
+		"Email john@acme.com about card 4111 1111 1111 1111",
+		"ssn 078-05-1120 call +44 20 7946 0958 GB82 WEST 1234 5698 7654 32",
+		"SSN: 123456789", "no pii here", "12345678", "AB12 3456789012 3456",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		a, b := find(s, AllKinds(), true), find(s, AllKinds(), false)
+		if len(a) != len(b) {
+			t.Fatalf("prefilter changed the result for %q: %v vs %v", s, a, b)
+		}
+		for i := range a {
+			if a[i] != b[i] {
+				t.Fatalf("prefilter changed the result for %q: %v vs %v", s, a, b)
+			}
+		}
+	})
+}
+
+func BenchmarkFindProse(b *testing.B) {
+	s := strings.Repeat("Summarize the main trade-offs between optimistic and pessimistic locking in a relational database. ", 20)
+	b.SetBytes(int64(len(s)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		Find(s, AllKinds())
+	}
 }
 
 func BenchmarkFind(b *testing.B) {

@@ -128,20 +128,16 @@ func (c config) reply(body []byte) string {
 		}
 		sb.WriteByte('.')
 	}
+	if sb.Len() > budget {
+		// The echo alone is longer than the fixed reply, so this reply is
+		// longer than others and timing is no longer request-independent.
+		c.overflow.Add(1)
+		return sb.String()
+	}
 	for sb.Len() < budget {
 		sb.WriteString(" lorem")
 	}
-	text := sb.String()
-	if len(text) > budget {
-		if c.echo {
-			// The echo alone is longer than the fixed reply, so this reply is
-			// longer than others and timing is no longer request-independent.
-			c.overflow.Add(1)
-		} else {
-			text = text[:budget]
-		}
-	}
-	return text
+	return sb.String()[:budget] // exactly budget bytes, so exactly the same chunk count every time
 }
 
 // requestItems walks the request JSON and returns, in order, the tokens and

@@ -64,6 +64,21 @@ type syncBuf struct {
 func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
 func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
 
+// logged waits for the audit line of a finished request. The handler writes it
+// in a deferred call, after the response has gone out, so a client can see the
+// response a moment before the line exists.
+func (s *syncBuf) logged(t *testing.T) string {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if out := s.String(); strings.HasSuffix(out, "\n") {
+			return out
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("no audit line was written")
+	return ""
+}
+
 type rig struct {
 	url   string
 	audit *syncBuf
@@ -398,7 +413,7 @@ func TestAuditLogHasCountsNotValues(t *testing.T) {
 	body := chatBody("mail john@acme.com card 4111 1111 1111 1111 ssn 078-05-1120 tel 415-555-2671", false)
 	post(t, rg, body, map[string]string{SessionHeader: "chat-secret-session"}).Body.Close()
 
-	log := rg.audit.String()
+	log := rg.audit.logged(t)
 	for _, s := range secrets {
 		if strings.Contains(log, s) {
 			t.Errorf("audit log contains %q:\n%s", s, log)
@@ -461,8 +476,8 @@ func TestTokenInURLIsNotRestored(t *testing.T) {
 		if !strings.Contains(got, "d=<EMAIL_") || !strings.HasSuffix(got, "plain john@acme.com") {
 			t.Errorf("stream=%v: got %q", streaming, got)
 		}
-		if !strings.Contains(rg.audit.String(), `"url_skipped":1`) {
-			t.Errorf("stream=%v: audit does not count the skipped URL token:\n%s", streaming, rg.audit.String())
+		if !strings.Contains(rg.audit.logged(t), `"url_skipped":1`) {
+			t.Errorf("stream=%v: audit does not count the skipped URL token:\n%s", streaming, rg.audit.logged(t))
 		}
 	}
 }

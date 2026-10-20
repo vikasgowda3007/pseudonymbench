@@ -60,10 +60,16 @@ var finders = map[Kind]func(string) []Match{
 
 // Find returns the non-overlapping matches of the enabled kinds, sorted by
 // start offset. Overlaps resolve by the priority order of Kinds.
-func Find(s string, enabled Set) []Match {
+func Find(s string, enabled Set) []Match { return find(s, enabled, true) }
+
+func find(s string, enabled Set, prefilter bool) []Match {
+	var p profile
+	if prefilter {
+		p = scan(s)
+	}
 	var out []Match
 	for _, k := range Kinds {
-		if !enabled[k] {
+		if !enabled[k] || (prefilter && !p.mayContain(k)) {
 			continue
 		}
 		cand := finders[k](s)
@@ -73,6 +79,48 @@ func Find(s string, enabled Set) []Match {
 		out = mergeSorted(out, dropOverlaps(cand, out))
 	}
 	return out
+}
+
+// profile is a cheap summary of a string, taken in one pass, that lets Find
+// skip a detector that cannot match: no '@' means no email, fewer digits than
+// a format needs means no card, SSN, phone or IBAN. Most prompt text is prose,
+// so this removes most regex scans. A differential fuzz test checks that Find
+// returns the same matches with and without it.
+type profile struct {
+	digits int
+	at     bool
+	upper  bool
+}
+
+func scan(s string) profile {
+	var p profile
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= '0' && c <= '9':
+			p.digits++
+		case c == '@':
+			p.at = true
+		case c >= 'A' && c <= 'Z':
+			p.upper = true
+		}
+	}
+	return p
+}
+
+func (p profile) mayContain(k Kind) bool {
+	switch k {
+	case Email:
+		return p.at
+	case Card:
+		return p.digits >= 13
+	case SSN:
+		return p.digits >= 9
+	case Phone:
+		return p.digits >= 8
+	case IBAN:
+		return p.upper && p.digits >= 2
+	}
+	return true
 }
 
 // dropOverlaps removes from cand every match that overlaps one in accepted.

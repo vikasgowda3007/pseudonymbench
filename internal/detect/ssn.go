@@ -33,12 +33,16 @@ func findSSNs(s string) []Match {
 }
 
 // validSSN applies the structural rules for numbers the SSA issues: area is
-// not 000, 666 or 900-999; group is not 00; serial is not 0000 (SSA POMS
-// RM 10201.035). Numbers assigned today are random within these limits, so
-// passing says "could be an SSN", not "is one". ITINs start with 9 and are
-// rejected, a known miss.
+// not 000 or 666; group is not 00; serial is not 0000 (SSA POMS RM 10201.035).
+// Areas 900-999 are not issued as SSNs, but numbers shaped 9xx-7x-xxxx or
+// 9xx-8x-xxxx are ITINs, which are taxpayer IDs and just as sensitive
+// (Presidio's supported-entities doc gives that shape), so they pass; other 9xx
+// numbers do not. Passing says "could be an SSN or ITIN", not "is one".
 func validSSN(area, group, serial string) bool {
-	if area == "000" || area == "666" || area[0] == '9' {
+	if area == "000" || area == "666" {
+		return false
+	}
+	if area[0] == '9' && group[0] != '7' && group[0] != '8' {
 		return false
 	}
 	return group != "00" && serial != "0000"
