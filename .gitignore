@@ -1,0 +1,7 @@
+.remember/
+.DS_Store
+bin/
+*.test
+*.prof
+coverage.out
+/results/*.tmp
