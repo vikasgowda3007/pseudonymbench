@@ -431,16 +431,85 @@ func TestUnknownTokenStaysVisibleAndIsCounted(t *testing.T) {
 	}
 }
 
-// A model that echoes the token with HTML-escaped brackets inside tool
-// arguments is a known miss: the rewriter does not decode the escape.
-func TestMissEscapedBracketsInArguments(t *testing.T) {
+// Some backends escape "<" and ">" inside the JSON text of tool arguments. The
+// token must still be restored, at every split position, and the arguments must
+// stay valid JSON.
+func TestEscapedBracketsInArgumentsAreRestored(t *testing.T) {
 	f := newFixture(t)
-	esc := string(rune(92)) + "u003c"
-	args := `{"to":"` + esc + strings.TrimPrefix(f.email, "<")
-	tc := map[string]any{"index": 0, "id": "c", "type": "function", "function": map[string]any{"name": "f", "arguments": args}}
-	out, _ := rewrite(t, f, chunk(0, map[string]any{"tool_calls": []any{tc}}, nil)+chunk(0, map[string]any{}, "stop")+done)
-	if got := argsByTool(parseOut(t, out))[[2]int{0, 0}]; strings.Contains(got, "john@acme.com") {
-		t.Errorf("escaped form was restored; update the README miss table: %q", got)
+	bs := string(rune(92))
+	esc := strings.NewReplacer("<", bs+"u003c", ">", bs+"u003e")
+	args := `{"to":"` + esc.Replace(f.email) + `","note":"a ` + bs + bs + `u003c b"}`
+	want := `{"to":"john@acme.com","note":"a ` + bs + bs + `u003c b"}` // an escaped backslash is not a bracket escape
+	for cut := 0; cut <= len(args); cut++ {
+		parts := cutAt(args, []int{cut})
+		var body strings.Builder
+		for i, a := range parts {
+			tc := map[string]any{"index": 0, "function": map[string]any{"arguments": a}}
+			if i == 0 {
+				tc["id"], tc["type"] = "c", "function"
+				tc["function"].(map[string]any)["name"] = "f"
+			}
+			body.WriteString(chunk(0, map[string]any{"tool_calls": []any{tc}}, nil))
+		}
+		body.WriteString(chunk(0, map[string]any{}, "tool_calls") + done)
+		out, _ := rewrite(t, f, body.String())
+		got := argsByTool(parseOut(t, out))[[2]int{0, 0}]
+		if got != want {
+			t.Fatalf("cut %d:\n got  %q\n want %q", cut, got, want)
+		}
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(got), &parsed); err != nil || parsed["to"] != "john@acme.com" {
+			t.Fatalf("cut %d: arguments no longer valid JSON: %v: %s", cut, err, got)
+		}
+	}
+}
+
+func TestDecodeBracketEscapes(t *testing.T) {
+	bs := string(rune(92))
+	tests := []struct{ in, out, partial string }{
+		{"plain", "plain", ""},
+		{bs + "u003cEMAIL" + bs + "u003e", "<EMAIL>", ""},
+		{bs + "u003C" + bs + "u003E", "<>", ""},
+		{bs + bs + "u003c", bs + bs + "u003c", ""}, // escaped backslash, then literal u003c
+		{bs + "n" + bs + "u0041", bs + "n" + bs + "u0041", ""},
+		{"abc" + bs, "abc", bs},
+		{"abc" + bs + "u00", "abc", bs + "u00"},
+		{"abc" + bs + "u003", "abc", bs + "u003"},
+	}
+	for _, tc := range tests {
+		out, partial := decodeBracketEscapes(tc.in)
+		if out != tc.out || partial != tc.partial {
+			t.Errorf("decodeBracketEscapes(%q) = (%q, %q), want (%q, %q)", tc.in, out, partial, tc.out, tc.partial)
+		}
+	}
+}
+
+// With URL restoration on, events with no token must still carry the stream's
+// metadata into a later synthetic flush chunk.
+func TestFlushChunkKeepsMetadataWithAllowURLs(t *testing.T) {
+	f := newFixture(t)
+	body := contentChunk(0, "hello ") + chunk(0, map[string]any{"content": "tail <EMA"}, nil) + done
+	rw := New(ctx, io.NopCloser(strings.NewReader(body)), f.sess, Options{AllowURLs: true})
+	out, _ := io.ReadAll(rw)
+	evs := parseOut(t, string(out))
+	syn := evs[len(evs)-2].json
+	if syn["id"] != "chatcmpl-1" || syn["model"] != "gpt-test" {
+		t.Errorf("synthetic chunk = %v", syn)
+	}
+}
+
+// The event-size limit must bound memory: a line that never ends is refused,
+// and no part of the oversize event is forwarded.
+func TestOversizeEventIsDroppedNotForwarded(t *testing.T) {
+	f := newFixture(t)
+	body := contentChunk(0, "before ") + "data: " + strings.Repeat("x", 200000) // no newline at all
+	rw := New(ctx, io.NopCloser(strings.NewReader(body)), f.sess, Options{MaxEventBytes: 4096})
+	out, err := io.ReadAll(rw)
+	if err != ErrEventTooLarge {
+		t.Fatalf("err = %v, want ErrEventTooLarge", err)
+	}
+	if strings.Contains(string(out), "xxxx") || !strings.Contains(string(out), "before ") {
+		t.Errorf("output = %q", out)
 	}
 }
 

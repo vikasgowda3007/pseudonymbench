@@ -64,7 +64,7 @@ Not run yet: a Presidio analyzer row (`eval presidio`, needs Docker) and rival p
 
 ### Which request fields leak
 
-A distinct canary email is planted in each of 20 request fields and the body the upstream received is checked. The control sends the same requests straight to the mock.
+A distinct canary email is planted in each of 21 request fields and the body the upstream received is checked. The control sends the same requests straight to the mock.
 
 | request field | pseudonymbench | no proxy (control) |
 |---|---|---|
@@ -88,6 +88,7 @@ A distinct canary email is planted in each of 20 request fields and the body the
 | `response_format.json_schema.description` | masked | LEAKED |
 | `image_url.url` (http, query string) | masked | LEAKED |
 | unknown top-level field | masked | LEAKED |
+| unknown top-level field (its name) | masked | LEAKED |
 
 The same command can fill in a column for any other proxy that can be pointed at the mock: `scripts/eval.sh` with `RIVALS=...`.
 
@@ -146,7 +147,7 @@ The full table with evidence is in [docs/threat-model.md](docs/threat-model.md).
 | Look-alikes | 10-digit IDs starting 2-9 and Luhn-passing 16-digit IDs get masked. Reversible, but they cost the model context. |
 | Tokens the model changes | Restoration is exact-match. A lowercased, spaced, truncated or paraphrased token stays as the model wrote it; it is never restored to a wrong value (tested). |
 | Tokens in links | Tokens inside a URL are deliberately left unrestored so a prompt-injected model cannot smuggle a value into a link. Best effort: links without a scheme and non-URL channels are not covered. |
-| Escaped brackets in streamed tool arguments | A model that writes `<...` instead of `<` defeats restoration in that field (documented by a test). |
+| The client's query string | Not forwarded (the upstream URL's own query string is). It is a request field the masker never sees. |
 | Images, audio, files; other APIs | Only text in chat-completions. Anthropic Messages, the Responses API and other dialects return 403. |
 | Quasi-identifiers | ZIP + gender + birth date identify most Americans without any masked field. Out of scope. |
 | Size and timing side channels | Not padded. |

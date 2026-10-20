@@ -50,7 +50,7 @@ func (r *Restorer) restoreValue(ctx context.Context, v any, key string) any {
 }
 
 func (r *Restorer) restoreArguments(ctx context.Context, s string) string {
-	if !strings.Contains(s, "<") {
+	if !strings.Contains(s, "<") && !hasEscapedOpener(s) {
 		return s
 	}
 	v, err := jsonx.Decode([]byte(s))
@@ -88,4 +88,17 @@ func (r *Restorer) restoreData(ctx context.Context, v any) any {
 	default:
 		return v
 	}
+}
+
+// hasEscapedOpener reports whether s holds the JSON escape for "<" (a
+// backslash, u, 003c, in either case). Tool arguments are JSON text, and some
+// backends write the bracket that way; decoding the JSON turns it back into a
+// real "<", so such strings must not be skipped.
+func hasEscapedOpener(s string) bool {
+	for i := 0; i+6 <= len(s); i++ {
+		if s[i] == '\\' && s[i+1] == 'u' && strings.EqualFold(s[i+2:i+6], "003c") {
+			return true
+		}
+	}
+	return false
 }

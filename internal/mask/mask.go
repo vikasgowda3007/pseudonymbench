@@ -114,17 +114,26 @@ func (m *Masker) Request(ctx context.Context, sess *Session, body []byte) ([]byt
 	}
 	w := &walker{ctx: ctx, m: m, sess: sess, blocked: map[detect.Kind]bool{}}
 	w.rep.Masked = map[detect.Kind]int{}
+	masked := make(map[string]any, len(top))
 	for k, val := range top {
+		nk := k
+		if !structuralTop[k] {
+			// An unknown top-level field is user data: its name can carry PII too.
+			var err error
+			if nk, err = w.str(k); err != nil {
+				return nil, w.rep, err
+			}
+		}
 		nv, err := w.value(val, k, structuralTop[k])
 		if err != nil {
 			return nil, w.rep, err
 		}
-		top[k] = nv
+		masked[nk] = nv
 	}
 	if len(w.blocked) > 0 {
 		return nil, w.rep, w.blockedError()
 	}
-	out, err := jsonx.Encode(top)
+	out, err := jsonx.Encode(masked)
 	return out, w.rep, err
 }
 

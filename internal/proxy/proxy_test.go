@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -670,5 +671,108 @@ func TestPerRequestSessionsAreForgotten(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if n := rg.vault.Sessions(); n != 1 {
 		t.Errorf("sessions = %d, want 1 for the named session", n)
+	}
+}
+
+// Callers who authenticate with api-key or x-api-key rather than Authorization
+// must not share a session just because they chose the same session name.
+func TestSessionIsolationCoversOtherCredentialHeaders(t *testing.T) {
+	var remembered atomic.Value
+	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, body []byte) {
+		if c := userContent(body); strings.Contains(c, "<EMAIL_") {
+			remembered.Store(c)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		prev, _ := remembered.Load().(string)
+		out, _ := jsonx.Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": "earlier: " + prev}}}})
+		w.Write(out)
+	})
+	rg := newRig(t, up, nil)
+	for _, h := range []string{"Api-Key", "X-Api-Key"} {
+		mk := func(key string) map[string]string {
+			return map[string]string{SessionHeader: "shared-name", "Authorization": "", h: key}
+		}
+		post(t, rg, chatBody("my mail is john@acme.com", false), mk("tenant-A")).Body.Close()
+		if got := completionText(t, post(t, rg, chatBody("again?", false), mk("tenant-A"))); !strings.Contains(got, "john@acme.com") {
+			t.Errorf("%s: same caller lost its session: %q", h, got)
+		}
+		if got := completionText(t, post(t, rg, chatBody("again?", false), mk("tenant-B"))); strings.Contains(got, "john@acme.com") {
+			t.Errorf("%s: another tenant read this session: %q", h, got)
+		}
+	}
+}
+
+// If the upstream response cannot be read, the client gets a clean error with
+// its own headers, not the upstream's Content-Length over our error body.
+func TestUpstreamReadFailureGivesCleanError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				bufio.NewReader(c).ReadString('\n')
+				time.Sleep(50 * time.Millisecond)
+				// Promise 100000 bytes, deliver 5, hang up.
+				io.WriteString(c, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100000\r\n\r\nshort")
+			}()
+		}
+	}()
+	u, _ := url.Parse("http://" + ln.Addr().String())
+	h, _ := New(Config{Upstream: u, Masker: mask.New(nil), Vault: vault.NewMemory(vault.MemoryOptions{}), SessionKey: []byte("k")})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	resp, err := http.Post(srv.URL+chatPath, "application/json", strings.NewReader(chatBody("hi", false)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 502 || !strings.Contains(string(b), "upstream_read") {
+		t.Errorf("status %d body %s", resp.StatusCode, b)
+	}
+	if cl := resp.Header.Get("Content-Length"); cl == "100000" {
+		t.Errorf("upstream Content-Length leaked onto the error response")
+	}
+}
+
+func TestOversizeJSONResponseIsAnErrorNotTruncated(t *testing.T) {
+	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, body []byte) {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"content":"`+strings.Repeat("a", 5000)+`"}}]}`)
+	})
+	rg := newRig(t, up, func(c *Config) { c.MaxRewriteBytes = 1024 })
+	resp := post(t, rg, chatBody("hi", false), nil)
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 502 || !strings.Contains(string(b), "upstream_too_large") {
+		t.Errorf("status %d body %s", resp.StatusCode, b)
+	}
+}
+
+// The upstream URL's own query string (Azure's api-version) is sent; the
+// client's is not, because it is a request field the masker never sees.
+func TestUpstreamQueryStringHandling(t *testing.T) {
+	var gotQuery atomic.Value
+	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, body []byte) {
+		gotQuery.Store(r.URL.RawQuery)
+		echoJSON(w, r, body)
+	})
+	rg := newRig(t, up, func(c *Config) { c.Upstream.RawQuery = "api-version=2024-02-01" })
+	req, _ := http.NewRequest(http.MethodPost, rg.url+chatPath+"?user=john@acme.com", strings.NewReader(chatBody("hi", false)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if q := gotQuery.Load(); q != "api-version=2024-02-01" {
+		t.Errorf("upstream query = %q", q)
 	}
 }

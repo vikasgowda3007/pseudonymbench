@@ -40,6 +40,8 @@ type backend struct {
 	name    string
 	make    func(t *testing.T, ttl time.Duration, newToken func(detect.Kind) string) (v Vault, advance func(time.Duration))
 	inspect func(t *testing.T) string // dumps stored state, "" if not applicable
+	keys    func() []string
+	ttl     func(key string) time.Duration
 }
 
 func memoryBackend() backend {
@@ -72,6 +74,8 @@ func redisBackend() backend {
 			t.Cleanup(func() { v.Close() })
 			return v, mr.FastForward
 		},
+		keys: func() []string { return mr.Keys() },
+		ttl:  func(key string) time.Duration { return mr.TTL(key) },
 		inspect: func(t *testing.T) string {
 			var b strings.Builder
 			for _, k := range mr.Keys() {
@@ -318,4 +322,22 @@ func TestForget(t *testing.T) {
 			t.Errorf("Tokenize after Forget: %v", err)
 		}
 	})
+}
+
+// Sealed values must never exist without an expiry, whatever order the
+// writes land in.
+func TestRedisKeysAlwaysHaveATTL(t *testing.T) {
+	b := redisBackend()
+	v, _ := b.make(t, time.Minute, nil)
+	for i := 0; i < 20; i++ {
+		v.Tokenize(ctx, "s1", detect.Email, "user"+string(rune('a'+i))+"@acme.com")
+	}
+	for _, k := range b.keys() {
+		if ttl := b.ttl(k); ttl <= 0 {
+			t.Errorf("key %s has no TTL", k)
+		}
+	}
+	if len(b.keys()) != 2 {
+		t.Errorf("keys = %v", b.keys())
+	}
 }

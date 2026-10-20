@@ -86,18 +86,22 @@ func (r *Redis) Tokenize(ctx context.Context, sid string, kind detect.Kind, valu
 
 	for i := 0; i < maxAllocAttempts; i++ {
 		tok := r.o.newToken(kind)
-		claimed, err := r.o.Client.HSetNX(ctx, t2v, tok, r.o.Sealer.Seal(sid, tok, value)).Result()
-		if err != nil {
+		// Claim the token and give the session an expiry in one transaction, so
+		// a failure between the two cannot leave sealed values with no TTL.
+		tx := r.o.Client.TxPipeline()
+		claim := tx.HSetNX(ctx, t2v, tok, r.o.Sealer.Seal(sid, tok, value))
+		tx.Expire(ctx, t2v, r.o.TTL)
+		if _, err := tx.Exec(ctx); err != nil {
 			return "", err
 		}
-		if !claimed {
+		if claimed, _ := claim.Result(); !claimed {
 			continue // token collision: pick another
 		}
-		pipe := r.o.Client.Pipeline()
-		won := pipe.HSetNX(ctx, v2t, idx, tok)
-		pipe.Expire(ctx, t2v, r.o.TTL)
-		pipe.Expire(ctx, v2t, r.o.TTL)
-		if _, err := pipe.Exec(ctx); err != nil {
+		tx = r.o.Client.TxPipeline()
+		won := tx.HSetNX(ctx, v2t, idx, tok)
+		tx.Expire(ctx, v2t, r.o.TTL)
+		tx.Expire(ctx, t2v, r.o.TTL)
+		if _, err := tx.Exec(ctx); err != nil {
 			return "", err
 		}
 		if w, _ := won.Result(); w {

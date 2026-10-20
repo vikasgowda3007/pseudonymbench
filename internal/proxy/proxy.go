@@ -50,7 +50,10 @@ type Config struct {
 
 	AllowURLs    bool  // restore tokens that appear inside URLs
 	MaxBodyBytes int64 // request body limit; default 8 MiB
-	ExposeCounts bool  // send MaskedHeader on responses
+	// MaxRewriteBytes bounds a non-streamed response the proxy will buffer in
+	// order to restore it; larger ones fail with 502. Default 64 MiB.
+	MaxRewriteBytes int
+	ExposeCounts    bool // send MaskedHeader on responses
 
 	Audit     *slog.Logger // nil disables audit logging
 	Transport http.RoundTripper
@@ -72,6 +75,9 @@ func New(cfg Config) (*Handler, error) {
 	}
 	if cfg.MaxBodyBytes <= 0 {
 		cfg.MaxBodyBytes = 8 << 20
+	}
+	if cfg.MaxRewriteBytes <= 0 {
+		cfg.MaxRewriteBytes = 64 << 20
 	}
 	rt := cfg.Transport
 	if rt == nil {
@@ -215,9 +221,14 @@ func (h *Handler) respond(w http.ResponseWriter, r *http.Request, resp *http.Res
 		rec.restored, rec.unknown, rec.urlSkipped, rec.restoreErr = st.Restored, st.Unknown, st.URLSkipped, st.Errors
 
 	case ct == "application/json":
-		raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(h.cfg.MaxRewriteBytes)+1))
 		if err != nil {
 			h.fail(w, rec, http.StatusBadGateway, "upstream_read", "could not read upstream response", "upstream_error")
+			return
+		}
+		if len(raw) > h.cfg.MaxRewriteBytes {
+			// Forwarding a truncated body as a success would corrupt it silently.
+			h.fail(w, rec, http.StatusBadGateway, "upstream_too_large", "upstream response is too large to rewrite", "upstream_error")
 			return
 		}
 		rs := &mask.Restorer{Session: sess, AllowURLs: h.cfg.AllowURLs}
@@ -294,9 +305,12 @@ func (h *Handler) upstreamRequest(r *http.Request, body []byte) (*http.Request, 
 }
 
 func (h *Handler) upstreamURL(path string) string {
+	// The upstream URL's own query string (for example Azure's ?api-version=)
+	// is kept. The client's query string is not forwarded: it is a request field
+	// the masker never sees.
 	u := *h.cfg.Upstream
 	u.Path = strings.TrimRight(u.Path, "/") + path
-	u.RawQuery = ""
+	u.RawPath = ""
 	return u.String()
 }
 
@@ -316,7 +330,7 @@ func (h *Handler) sessionID(r *http.Request) (string, error) {
 	if !sessionIDRE.MatchString(caller) {
 		return "", errors.New(SessionHeader + " must match [A-Za-z0-9._-]{1,128}")
 	}
-	cred := sha256.Sum256([]byte(r.Header.Get("Authorization")))
+	cred := sha256.Sum256([]byte(credentials(r)))
 	m := hmac.New(sha256.New, h.cfg.SessionKey)
 	m.Write(cred[:])
 	m.Write([]byte{0})
@@ -324,9 +338,36 @@ func (h *Handler) sessionID(r *http.Request) (string, error) {
 	return hex.EncodeToString(m.Sum(nil)), nil
 }
 
+// credentialHeaders are the request headers that identify a caller to an
+// OpenAI-style API: the standard bearer header, Azure's api-key, and the
+// x-api-key convention. All of them go into the session identity, so two
+// callers who authenticate differently never share a session even if they
+// pick the same session name. Callers who send none share one namespace.
+var credentialHeaders = []string{"Authorization", "Api-Key", "X-Api-Key"}
+
+func credentials(r *http.Request) string {
+	var parts []string
+	for _, h := range credentialHeaders {
+		parts = append(parts, r.Header.Get(h))
+	}
+	return strings.Join(parts, "\x00")
+}
+
 // fail writes an OpenAI-shaped error. The message never includes request content.
 func (h *Handler) fail(w http.ResponseWriter, rec *record, status int, code, msg, outcome string) {
 	rec.status, rec.outcome = status, outcome
+	// Headers already copied from an upstream response (Content-Length,
+	// Content-Encoding ...) describe a body we are not sending.
+	hdr := w.Header()
+	keep := map[string]string{"X-Request-Id": hdr.Get("X-Request-Id"), MaskedHeader: hdr.Get(MaskedHeader)}
+	for k := range hdr {
+		delete(hdr, k)
+	}
+	for k, v := range keep {
+		if v != "" {
+			hdr.Set(k, v)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	body := `{"error":{"message":` + quote(msg) + `,"type":"pseudonymbench_error","code":` + quote(code) + `}}` + "\n"

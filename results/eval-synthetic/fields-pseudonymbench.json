@@ -120,6 +120,12 @@
       "field": "unknown top-level field",
       "outcome": "masked",
       "status": 200
+    },
+    {
+      "id": "unknown-field-key",
+      "field": "unknown top-level field (name)",
+      "outcome": "masked",
+      "status": 200
     }
   ]
 }

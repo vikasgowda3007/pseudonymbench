@@ -55,7 +55,7 @@ Cut from the original plan: Presidio sidecar in the proxy, format-preserving tok
 
 - Entities: EMAIL, PHONE, SSN, CARD, IBAN. Other PII in a dataset is tagged `OTHER`: neither a hit nor a miss, and masking over it is not a false positive.
 - Black-box: send text through the proxy, read what the mock received, align with the original (word-level LCS), score gold spans against changed regions. A test checks this equals running the detectors directly.
-- Field matrix: a distinct canary email in each of 20 request fields; `masked`, `LEAKED` or `rejected`; a no-proxy control must leak all 20. `messages[].name` and `logit_bias` keys are not probed (API character restrictions); response-side restoration is covered by the stream and proxy tests.
+- Field matrix: a distinct canary email in each of 21 request fields; `masked`, `LEAKED` or `rejected`; a no-proxy control must leak all 21. `messages[].name` and `logit_bias` keys are not probed (API character restrictions); response-side restoration is covered by the stream and proxy tests.
 
 ## Status against the plan
 

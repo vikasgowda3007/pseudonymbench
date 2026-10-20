@@ -230,7 +230,7 @@ func TestFieldMatrix(t *testing.T) {
 		}
 	}
 	md := FieldsMarkdown([]FieldReport{masked, control})
-	if !strings.Contains(md, "| no proxy |") || !strings.Contains(md, "no proxy 20/20") {
+	if !strings.Contains(md, "| no proxy |") || !strings.Contains(md, "no proxy 21/21") {
 		t.Errorf("matrix markdown:\n%s", md)
 	}
 }

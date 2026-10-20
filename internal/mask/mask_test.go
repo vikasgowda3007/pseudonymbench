@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/vikasgowda3007/pseudonymbench/internal/detect"
+	"github.com/vikasgowda3007/pseudonymbench/internal/jsonx"
 	"github.com/vikasgowda3007/pseudonymbench/internal/token"
 	"github.com/vikasgowda3007/pseudonymbench/internal/vault"
 )
@@ -344,4 +345,40 @@ func FuzzMaskComplete(f *testing.F) {
 			t.Fatalf("round trip mismatch: %q -> %q -> %q", s, out, back)
 		}
 	})
+}
+
+// A field name is user data too: an email used as a top-level key must not
+// reach the upstream.
+func TestUnknownTopLevelKeysAreMasked(t *testing.T) {
+	out, rep := mustMask(t, New(nil), newSession(),
+		`{"model":"m","messages":[{"role":"user","content":"hi"}],"alice@corp.com":"x","x_ext":{"bob@corp.com":1}}`)
+	if strings.Contains(out, "alice@corp.com") || strings.Contains(out, "bob@corp.com") {
+		t.Errorf("a key leaked: %s", out)
+	}
+	if rep.Masked[detect.Email] != 2 {
+		t.Errorf("masked = %v", rep.Masked)
+	}
+	// Known structural keys are untouched.
+	if !strings.Contains(out, `"model":"m"`) || !strings.Contains(out, `"messages"`) {
+		t.Errorf("structural keys altered: %s", out)
+	}
+}
+
+// Backends that escape "<" in tool arguments must not defeat restoration.
+func TestRestoreArgumentsWithEscapedBrackets(t *testing.T) {
+	sess := newSession()
+	tok, _ := sess.Tokenize(ctx, detect.Email, "john@acme.com")
+	bs := string(rune(92))
+	escaped := strings.NewReplacer("<", bs+"u003c", ">", bs+"u003e").Replace(tok)
+	args := `{"to":"` + escaped + `"}`
+	resp, _ := jsonx.Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"tool_calls": []any{
+		map[string]any{"function": map[string]any{"name": "f", "arguments": args}}}}}}})
+	r := &Restorer{Session: sess}
+	out, err := r.RestoreJSON(ctx, resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "john@acme.com") {
+		t.Errorf("escaped token not restored: %s", out)
+	}
 }

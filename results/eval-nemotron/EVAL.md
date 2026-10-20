@@ -53,5 +53,6 @@ Overall precision (any changed region overlapping a gold span): 0.995 over 2156 
 | response_format.json_schema.description | masked |
 | image_url.url (http, query string) | masked |
 | unknown top-level field | masked |
+| unknown top-level field (name) | masked |
 
-Fields where the canary reached the upstream: pseudonymbench 0/20.
+Fields where the canary reached the upstream: pseudonymbench 0/21.

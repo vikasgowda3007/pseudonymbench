@@ -110,6 +110,9 @@ func Cases() []FieldCase {
 		{"unknown-field", "unknown top-level field", func(c string) obj {
 			return with(base(), "x_vendor_extension", obj{"note": c})
 		}},
+		{"unknown-field-key", "unknown top-level field (name)", func(c string) obj {
+			return with(base(), c, "v")
+		}},
 	}
 }
 

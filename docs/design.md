@@ -101,8 +101,8 @@ identical.
 The walk is **default-scan**: every string is scanned unless its key is on a short
 list of structural fields the API validates (`model`, `role`, `type`, `id`,
 `tool_call_id`, `finish_reason`, `name`, `detail`, `format`, base64 `data`
-fields, `data:` URLs ...). Unknown top-level keys and `metadata` count as user
-data, so their keys are scanned as well as their values. Tool-call `arguments` is
+fields, `data:` URLs ...). Unknown top-level fields and `metadata` count as user
+data, so their names are scanned as well as their values. Tool-call `arguments` is
 a string containing JSON: it is parsed, every key and string is scanned, and it
 is encoded again so escaping stays correct; if it does not parse it is scanned as
 plain text. A scanner that skips unknown fields would leak the first time the API
@@ -145,10 +145,21 @@ Flush rules, each with a test:
 | Comments, `event:`, `id:` lines, CRLF framing | Preserved |
 
 Events whose text did not change are forwarded **byte for byte**; changed events
-are re-serialized. The rewriter parses every event while the URL guard is on,
-because the guard has to see every byte of text to know whether a later token sits
-inside a link: skipping "plain" events let a `://` split across events go
-unnoticed (found by a test, now covered by `TestURLGuardAcrossChunks`).
+are re-serialized. Every event is parsed, because the URL guard has to see every
+byte of text to know whether a later token sits inside a link: an earlier version
+skipped events without a `<` and let a `://` split across two events go unnoticed
+(found by a test, now covered by `TestURLGuardAcrossChunks`).
+
+Tool-call `arguments` are JSON text, and some backends escape `<` and `>` in it as
+unicode escapes. In those two fields the rewriter decodes just those escapes
+before matching (`decodeBracketEscapes`), leaves every other escape alone, and
+holds an incomplete escape at the end of a piece for the next one. Decoding is
+safe in JSON text: the characters may appear unescaped and the decoded value is
+unchanged.
+
+The event-size limit is enforced while reading, line by line, so an endless line
+cannot grow memory first; an oversize event is dropped whole, never forwarded in
+part.
 
 ## Vault
 
@@ -181,7 +192,7 @@ and keeps values unencrypted in process memory.
   Tokens for the same value differ between requests, and the session is deleted
   (`Vault.Forget`) as soon as the response, or the whole stream, is done, so
   sessionless traffic does not pile up in the vault until the TTL.
-- With the header: `sid = HMAC(sessionKey, sha256(Authorization) || 0 || header)`.
+- With the header: `sid = HMAC(sessionKey, sha256(Authorization, Api-Key and X-Api-Key values) || 0 || header)`.
   Two callers using the same session name, or an attacker who guesses a name,
   land in different vault sessions.
 - The header is stripped before the request goes upstream.

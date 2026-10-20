@@ -133,10 +133,10 @@ have licences that forbid redistribution; `gretelai/gretel-pii-masking-en-v1`
 
 ## 3. Field coverage
 
-`eval fields` plants a distinct canary email in each of 20 request fields,
+`eval fields` plants a distinct canary email in each of 21 request fields,
 sends the request, and checks whether the canary is in the body the upstream
 received: `masked`, `LEAKED`, or `rejected` (the proxy refused, which counts as
-safe). A **no-proxy control** must show all 20 leaking, otherwise the check could
+safe). A **no-proxy control** must show all 21 leaking, otherwise the check could
 not tell a masker from a no-op. Run several proxies and `eval merge` their JSON
 into one table.
 

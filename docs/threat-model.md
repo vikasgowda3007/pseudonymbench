@@ -23,11 +23,11 @@ compliance statement. The tool does **pseudonymization, not anonymization**.
 
 | Claim | Where it is checked |
 |---|---|
-| A detected value never reaches the upstream in any scanned field | `internal/eval` field matrix: a canary planted in each of 20 request fields; a no-proxy control must leak all 20 |
+| A detected value never reaches the upstream in any scanned field | `internal/eval` field matrix: a canary planted in each of 21 request fields; a no-proxy control must leak all 21 |
 | A request the proxy cannot scan is rejected, not forwarded | `internal/proxy` `TestFailsClosed`: bad JSON, non-object, wrong content type, gzip body, oversize body, blocked kind, unknown path, wrong method; upstream call count must be 0 |
 | A vault failure never sends the request unmasked | `TestVaultFailureFailsClosed` |
 | Tokens from one session restore nothing in another | `internal/vault` `TestSessionsAreIsolated`; `internal/proxy` `TestSessionContinuityAndIsolation` (a different credential with the same session header cannot read the token) |
-| Guessing a session name is not enough to read its tokens | Session ids are `HMAC(key, sha256(Authorization) \|\| session header)` (`proxy.sessionID`); tested as above |
+| Guessing a session name is not enough to read its tokens | Session ids are `HMAC(key, sha256(credential headers) \|\| session header)`, where the credential headers are `Authorization`, `Api-Key` and `X-Api-Key` (`proxy.sessionID`); tested as above, including the api-key headers |
 | Redis holds no plaintext values | `TestRedisStoresNoPlaintext`; values are sealed with AES-256-GCM, bound to session and token as additional data (`TestSealer`) |
 | The audit log holds counts and timings, never values | `TestAuditLogHasCountsNotValues` greps the log for each planted value, the bearer token and the session name |
 | A token the model puts inside a URL is not restored | `internal/mask` `TestRestoreURLGuard`, `internal/stream` `TestURLGuardAcrossChunks` (every split position), `internal/proxy` `TestTokenInURLIsNotRestored` |
@@ -49,7 +49,7 @@ points at a number reproducible with `scripts/eval.sh` or `scripts/bench.sh`.
 | 4 | **Card networks and phone formats outside the tables** | Issuer prefixes are a short table (Visa, Mastercard, Amex, Discover, Diners, JCB, UnionPay, Maestro); phones are NANP plus `+`-prefixed international. RuPay, Mir, Elo and national formats without `+` are not detected. | By construction; tests in `internal/detect` |
 | 5 | **ITINs, SSNs written without separators and without a nearby "SSN" word** | Bare nine digits are too common to mask | By construction |
 | 6 | **The model changes a token** (lowercases, translates, drops it, pastes half) | Restoration is an exact string match; there is no fuzzy matching, which would restore values the model never saw | `TestMangledTokensStayVisible`: lowercased, bracket-less, spaced and truncated tokens come back exactly as the model wrote them, never as a wrong value |
-| 7 | **Token escaped as `<...` inside streamed tool arguments** | The rewriter matches literal `<`; it does not decode JSON escapes inside argument fragments | `TestMissEscapedBracketsInArguments` documents the current behaviour |
+| 7 | **Request fields outside the request body** | The client's query string is dropped, not scanned: the upstream URL's own query string (for example Azure's `api-version`) is used instead. Headers other than the credential headers are forwarded unscanned. | `TestUpstreamQueryStringHandling` |
 | 8 | **Stream ends mid-token at `max_tokens`** | The partial token is flushed as plain text. This is deliberate: guessing the rest would restore something the model never wrote | `TestFlushOnEOFWithoutDone`, `TestHeldTextIsFlushedBeforeFinishChunk` |
 | 9 | **PII in images, audio, files** | Only text is scanned. `data:` URLs and base64 audio/file fields are skipped. An `http` image URL **is** scanned as a string. | Field matrix lists `image_url.url (http)`; media content is not inspected |
 | 10 | **`messages[].name` and function names** | The API restricts them to `[a-zA-Z0-9_-]` and rejects tokens, so they are skipped | `structuralSkip` in `internal/mask` |
@@ -87,7 +87,7 @@ Tokens are `<KIND_` plus 32 random bits. Within a session a collision is
 rejected at allocation. Across sessions, a token restores nothing: the lookup is
 keyed by session id, and the session id is derived from the caller's credential
 and the session header with a secret key. An attacker who guesses a token and a
-session name but does not hold the same `Authorization` value reads nothing.
+session name but does not send the same `Authorization`, `Api-Key` or `X-Api-Key` value reads nothing. Callers who send none of those share one namespace, where the session name is the only secret; put authentication in front of the proxy.
 
 ### Vault compromise
 

@@ -16,6 +16,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/vikasgowda3007/pseudonymbench/internal/jsonx"
 	"github.com/vikasgowda3007/pseudonymbench/internal/mask"
@@ -129,15 +130,34 @@ func (r *Rewriter) fill() {
 	}
 }
 
+// readLine reads one line, refusing to buffer more than budget bytes. A plain
+// ReadBytes would hold an unbounded line in memory before any check could run.
+func (r *Rewriter) readLine(budget int) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := r.src.ReadSlice('\n')
+		if len(line)+len(chunk) > budget {
+			return nil, ErrEventTooLarge
+		}
+		line = append(line, chunk...)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return line, err
+	}
+}
+
+// readEvent reads lines up to the blank line that ends an event. An oversize
+// event returns ErrEventTooLarge and no lines: half an event is never forwarded.
 func (r *Rewriter) readEvent() ([][]byte, error) {
 	var lines [][]byte
 	total := 0
 	for {
-		line, err := r.src.ReadBytes('\n')
-		total += len(line)
-		if total > r.opts.MaxEventBytes {
-			return lines, ErrEventTooLarge
+		line, err := r.readLine(r.opts.MaxEventBytes - total)
+		if errors.Is(err, ErrEventTooLarge) {
+			return nil, err
 		}
+		total += len(line)
 		if len(line) > 0 {
 			lines = append(lines, line)
 		}
@@ -178,15 +198,6 @@ func (r *Rewriter) event(lines [][]byte) {
 	data := bytes.Join(payload, []byte("\n"))
 	if bytes.Equal(bytes.TrimSpace(data), doneMark) {
 		r.flushAll()
-		r.passthrough(lines)
-		return
-	}
-	// Fast path: nothing held and no '<' anywhere (raw or JSON-escaped) means
-	// no token can start or finish here, so skip the JSON parse. Only valid
-	// when URL tokens are allowed: the URL guard has to see every byte of text
-	// to know whether a later token sits inside a link, and a skipped chunk
-	// could hold the "://" or the space that changes that.
-	if r.opts.AllowURLs && !r.anyHeld() && !mayContainToken(data) {
 		r.passthrough(lines)
 		return
 	}
@@ -242,12 +253,6 @@ func trimData(line []byte) []byte {
 	return d
 }
 
-// mayContainToken reports whether a payload could carry a token opener. The
-// bracket may be JSON-escaped by the upstream.
-func mayContainToken(b []byte) bool {
-	return bytes.IndexByte(b, '<') >= 0 || bytes.Contains(b, []byte(`<`)) || bytes.Contains(b, []byte(`<`))
-}
-
 func (r *Rewriter) anyHeld() bool {
 	for _, ch := range r.chans {
 		if ch.held != "" {
@@ -269,11 +274,19 @@ func (r *Rewriter) channel(k chanKey) *channel {
 // push feeds a piece of text into a channel and returns what is safe to emit.
 func (r *Rewriter) push(k chanKey, s string) string {
 	ch := r.channel(k)
-	safe, held := token.SplitTail(ch.held + s)
-	if held != "" {
+	text := ch.held + s
+	partial := ""
+	if k.kind == chArgs || k.kind == chFnArgs {
+		// Arguments are JSON text, and some backends escape "<" and ">" as
+		// unicode escapes inside it. Decode just those two so a token written
+		// that way is still recognised (see decodeBracketEscapes).
+		text, partial = decodeBracketEscapes(text)
+	}
+	safe, held := token.SplitTail(text)
+	if held != "" || partial != "" {
 		r.stats.Held++
 	}
-	ch.held = held
+	ch.held = held + partial
 	return ch.r.Text(r.ctx, safe)
 }
 
@@ -475,4 +488,46 @@ func intOf(v any, def int) int {
 		return n
 	}
 	return def
+}
+
+// decodeBracketEscapes rewrites the JSON escapes for "<" and ">" (a backslash,
+// the letter u, then 003c or 003e in either case) into the characters
+// themselves. Replacing them is safe inside JSON text: both characters may
+// appear unescaped in a JSON string, and the decoded value is unchanged. Every
+// other escape is copied as a pair, so an escaped backslash followed by u003c
+// is not misread. A trailing, incomplete escape is returned in partial, to be
+// joined with the next piece.
+func decodeBracketEscapes(s string) (out, partial string) {
+	if strings.IndexByte(s, '\\') < 0 {
+		return s, ""
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] != '\\' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		if i+1 >= len(s) {
+			return b.String(), s[i:]
+		}
+		if s[i+1] == 'u' {
+			if i+6 > len(s) {
+				return b.String(), s[i:]
+			}
+			switch strings.ToLower(s[i+2 : i+6]) {
+			case "003c":
+				b.WriteByte('<')
+				i += 6
+				continue
+			case "003e":
+				b.WriteByte('>')
+				i += 6
+				continue
+			}
+		}
+		b.WriteString(s[i : i+2])
+		i += 2
+	}
+	return b.String(), ""
 }
