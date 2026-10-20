@@ -37,3 +37,20 @@ func TestRenderWithoutBaseline(t *testing.T) {
 		t.Errorf("missing baseline should show n/a:\n%s", out)
 	}
 }
+
+func TestCompact(t *testing.T) {
+	mk := func(label string, stream bool, p50, p99, t50, t99 float64) bench.Result {
+		r := result(label, stream, p50, p99, t50, t99)
+		return r
+	}
+	out := compact([]bench.Result{
+		mk("direct", false, 1000, 1010, 0, 0), mk("direct", true, 1100, 1200, 150, 160),
+		mk("direct-repeat", false, 1001, 1012, 0, 0), mk("direct-repeat", true, 1101, 1203, 150.5, 163),
+		mk("proxy", false, 1002, 1030, 0, 0), mk("proxy", true, 1103, 1230, 151, 170),
+	}, "direct", "direct-repeat", "proxy")
+	for _, want := range []string{"| pii |", "+2.0", "+20.0", "+1.0", "+10.0", "150.0 / 160.0", "1.0 / 2.0, 0.5 / 3.0"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("compact output lacks %q:\n%s", want, out)
+		}
+	}
+}

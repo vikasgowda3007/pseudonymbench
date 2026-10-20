@@ -1,0 +1,125 @@
+{
+  "label": "pseudonymbench",
+  "results": [
+    {
+      "id": "content-string",
+      "field": "messages[].content (string)",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "content-parts",
+      "field": "messages[].content[].text",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "system",
+      "field": "system message",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "developer",
+      "field": "developer message",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "assistant",
+      "field": "assistant message",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "refusal",
+      "field": "assistant refusal",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "tool-args-value",
+      "field": "tool_calls[].function.arguments (value)",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "tool-args-key",
+      "field": "tool_calls[].function.arguments (key)",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "tool-result",
+      "field": "tool message content",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "tool-description",
+      "field": "tools[].function.description",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "tool-schema",
+      "field": "tools[].function.parameters (schema text)",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "functions-legacy",
+      "field": "functions[].description (legacy)",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "user",
+      "field": "user",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "metadata-value",
+      "field": "metadata (value)",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "metadata-key",
+      "field": "metadata (key)",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "stop",
+      "field": "stop",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "prediction",
+      "field": "prediction.content",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "response-format",
+      "field": "response_format.json_schema.description",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "image-url",
+      "field": "image_url.url (http, query string)",
+      "outcome": "masked",
+      "status": 200
+    },
+    {
+      "id": "unknown-field",
+      "field": "unknown top-level field",
+      "outcome": "masked",
+      "status": 200
+    }
+  ]
+}

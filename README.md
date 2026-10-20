@@ -12,9 +12,24 @@ All of these are reproducible from this repo; commands are under [Reproduce](#re
 
 ### What the proxy costs
 
-Added latency against going straight to the upstream, at 100 requests/s open-loop, 40 s measured after a 5 s warmup, mock upstream with a 150 ms prefill and a streamed reply of 240 chunks. Apple M4, 16 GB, macOS, Go 1.26.3; generator, proxy and mock share the machine, so treat these as a lower bound on what a quiet host would show, not as a benchmark of record.
+Added latency against going straight to the upstream, at 100 requests/s open-loop, 3,000 requests per cell (30 s after a 4 s warmup). The mock upstream waits 150 ms (prefill), then streams a 960-byte reply as 240 chunks 12 ms apart, so a completion takes about 3 s. Apple M4, 16 GB, macOS, Go 1.26.3; generator, proxy and mock share the machine and no run used Docker, so treat this as a laptop result, not a benchmark of record. In-memory vault; the Redis row has not been run.
 
 <!-- overhead:start -->
+| payload | JSON: added p50 (ms) | JSON: added p99 (ms) | stream: added TTFT p50 (ms) | stream: added TTFT p99 (ms) | baseline TTFT p50 / p99 (ms) | noise floor: JSON p50 / p99, TTFT p50 / p99 (ms) |
+|---|---:|---:|---:|---:|---:|---|
+| pii | +0.5 | +0.6 | +0.5 | -2.5 | 151.1 / 158.5 | 0.2 / 0.1, 0.0 / 4.4 |
+| pii-long | +0.7 | +0.9 | +0.6 | +1.5 | 151.2 / 154.3 | 0.1 / 0.2, 0.1 / 0.2 |
+| plain | +1.4 | +6.9 | +0.4 | +0.7 | 151.2 / 155.2 | 1.1 / 1.9, 0.0 / 0.1 |
+| tools | +0.4 | +0.6 | +0.4 | +1.2 | 151.2 / 154.6 | 0.1 / 0.0, 0.0 / 0.0 |
+
+What this says:
+
+- **The proxy adds about half a millisecond at the median** for payloads that contain PII, both to a complete JSON response and to the time until the first streamed token (baseline first token: 151 ms). At p99 the added time is about 1 ms for those payloads, close to what this machine can resolve: two identical baseline runs differ by up to 4.4 ms at p99 for time to first token (right-hand column), so read p99 as "a millisecond or two", not as a precise number.
+- **The `plain` row is worse than the PII rows, which is backwards.** Its median gap (+1.4 ms) is inside the noise of that cell pair (the repeat baseline was 1.1 ms slower than the first). Its p99 gap (+6.9 ms) is larger than that pair's noise floor (1.9 ms), and I have not found a cause: the same cell showed +0.9 ms and +0.8 ms in two earlier full runs, so it looks like a one-off tail event on a shared laptop, but a quiet host and more samples are needed to say.
+- **Streams are compared on time to first token only.** The total duration of a 240-chunk stream varies by up to 25 ms between two identical baseline runs on this machine (timer jitter accumulates over 240 sleeps), which is larger than any effect being measured. The full table with those columns is in [`results/laptop-3/REPORT.md`](results/laptop-3/REPORT.md).
+- Detection itself is cheap: `go test -bench` measures about 1.4 µs for 2 KB of prose and about 22 µs for 1.8 KB containing 40 PII values. The rest of the half millisecond (the extra network hop, JSON decode and encode, the vault) is not broken down here.
+
+Run it with `scripts/bench.sh`; `go run ./cmd/benchreport -subject pseudonymbench results/<run>/*.json` prints this table.
 <!-- overhead:end -->
 
 ### What it catches
@@ -174,6 +189,7 @@ Several open-source proxies already mask and restore PII for OpenAI-style APIs. 
 | [LLM-Shield-Proxy](https://github.com/ninadphalak/LLM-Shield-Proxy) | Sliding-window SSE restore; timings are in-process microseconds and say they are not end-to-end |
 | [Tamga](https://github.com/yatuk/tamga) | Go gateway; k6 open-loop load results, but with a no-PII payload and no direct baseline |
 | [PasteGuard](https://github.com/sgasser/pasteguard) | Mask and restore with streaming; ships an accuracy harness, no committed results |
+| [Anwesha33/pii-shield](https://github.com/Anwesha33/pii-shield) | A Go proxy with a plan close to this one's. At the commit I read it held back text for `content` only, shared one buffer across choices, and published detector latency, not proxy overhead |
 | [LiteLLM Presidio guardrail](https://docs.litellm.ai/docs/proxy/guardrails/pii_masking_v2) | Masks and restores; for OpenAI-format streams the guardrail buffers the whole response (see the research notes), which makes first-token latency equal full generation time |
 | [LLM Guard](https://github.com/protectai/llm-guard) | Anonymize/deanonymize scanners as a library; archived 2026-07 |
 

@@ -204,3 +204,21 @@ first byte, total). No values, no prompt text, no headers.
 | Exact-match restoration | Fuzzy matching | Fuzzy restoration can restore a value the model never saw. A changed token stays visible instead. |
 | Fail closed | Fail open | Forwarding a body the proxy could not scan defeats the purpose. |
 | OpenAI chat-completions only | Anthropic Messages, Responses API | Each is a different SSE dialect and a separate bug class. Other paths return 403 instead of being forwarded unscanned. |
+
+## What reading the other proxies changed
+
+Before writing the rewriter, the source of several existing proxies was read
+(`docs/research/maskgate-brainstorm.md`, section 1.3). Each of these is a mistake
+that was visible in at least one of them and is avoided here, with the test that
+keeps it avoided:
+
+| Seen elsewhere | Here | Test |
+|---|---|---|
+| One hold-back buffer shared by every `choices[]` entry, so `n>1` interleaving mixes text | State per (choice, field) | `TestInterleavedChoices` |
+| Only `delta.content` rewritten; tool-call arguments left with tokens in them | `tool_calls[].function.arguments`, legacy `function_call`, `refusal`, `audio.transcript` too | `TestToolCallArgumentsSplitAndParallel` |
+| Held tail flushed after the chunk carrying `finish_reason` | Tail goes into that chunk, before the finish signal | `TestHeldTextIsFlushedBeforeFinishChunk` |
+| Unbounded hold on a literal opener such as `${` in code output | Hold only a proper prefix of a real token, at most 15 bytes | `FuzzSplitTail` |
+| Request decoded into `map[string]any`: numbers become float64, `<`/`>`/`&` become `\u003c`... | `json.Number`, HTML escaping off | `TestFieldCoverage`, `TestNoHTMLEscaping` |
+| A truncated token at `max_tokens` "completed" by a heuristic, restoring text the model never wrote | Partial token flushed as written | `TestFlushOnEOFWithoutDone` |
+| Fail open when the detector or vault errors | Fail closed | `TestVaultFailureFailsClosed` |
+| One process-wide vault, so a token minted for one tenant restores in another's reply | Session id from the caller's credential and the session header | `TestSessionContinuityAndIsolation` |

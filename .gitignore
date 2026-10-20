@@ -8,3 +8,4 @@ coverage.out
 /results/smoke/
 /data/
 /results/eval-smoke/
+/results/**/*.log

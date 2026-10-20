@@ -99,7 +99,11 @@ placeholders it can recognise (this tool's tokens and common forms such as
 `[EMAIL_ADDRESS]` or `<PHONE_NUMBER>`).
 
 A test checks that this black-box number equals running the detectors directly
-on the same data.
+on the same data. On the Nemotron sample the overlap recall and precision are
+identical through the proxy and direct; the exact-span recall through the proxy is
+up to 1.3 points lower (email 0.991 against 0.998, phone 0.984 against 0.997),
+because word-level diffing cannot always recover a boundary exactly. The README
+quotes overlap recall for that reason.
 
 ### Metrics
 

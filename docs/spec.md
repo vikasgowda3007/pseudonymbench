@@ -72,6 +72,7 @@ Cut from the original plan: Presidio sidecar in the proxy, format-preserving tok
 
 ## Open items
 
+- Not built from the research notes: a Lua versus `HSETNX` allocation benchmark axis (section 6.1 suggested measuring it rather than assuming), and a type-confusion matrix in the scorer (section 7.2).
 - Run the Redis, LiteLLM and Presidio rows on a host with Docker; pin image digests and publish configs next to the numbers.
 - Re-run overhead on a quiet Linux host with pinned CPUs and at more than one rate; collect enough samples for p99.9.
 - Whether k6 (or another tool) can measure SSE TTFT natively is still unverified. If so, the custom load client could be dropped.

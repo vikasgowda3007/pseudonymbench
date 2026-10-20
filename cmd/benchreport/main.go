@@ -22,6 +22,8 @@ type key struct {
 
 func main() {
 	baseline := flag.String("baseline", "direct", "label of the baseline runs")
+	subject := flag.String("subject", "", "if set, print a compact per-payload summary for this label instead of the full table")
+	repeat := flag.String("repeat", "direct-repeat", "label of the repeated baseline, used as the noise floor in the compact summary")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: benchreport [-baseline direct] results/*.json\n")
 		flag.PrintDefaults()
@@ -39,6 +41,10 @@ func main() {
 			log.Fatal(err)
 		}
 		results = append(results, r)
+	}
+	if *subject != "" {
+		fmt.Print(compact(results, *baseline, *repeat, *subject))
+		return
 	}
 	fmt.Print(render(results, *baseline))
 }
@@ -111,3 +117,57 @@ func keyOf(r bench.Result) key {
 func f1(v float64) string { return fmt.Sprintf("%.1f", v) }
 
 func delta(v, base float64) string { return fmt.Sprintf("%+.1f", v-base) }
+
+// compact prints one row per payload: what the subject adds at p50 and p99 for
+// JSON responses and for time to first token on streams, next to the noise floor
+// (the same baseline run twice). A difference smaller than the noise floor is
+// not a finding.
+func compact(results []bench.Result, baseline, repeat, subject string) string {
+	by := map[string]map[key]bench.Result{}
+	for _, r := range results {
+		if by[r.Label] == nil {
+			by[r.Label] = map[key]bench.Result{}
+		}
+		by[r.Label][keyOf(r)] = r
+	}
+	payloads := map[string]float64{}
+	for k := range by[subject] {
+		payloads[k.payload] = k.rate
+	}
+	names := make([]string, 0, len(payloads))
+	for p := range payloads {
+		names = append(names, p)
+	}
+	sort.Strings(names)
+
+	var sb strings.Builder
+	sb.WriteString("| payload | JSON: added p50 (ms) | JSON: added p99 (ms) | stream: added TTFT p50 (ms) | stream: added TTFT p99 (ms) | baseline TTFT p50 / p99 (ms) | noise floor: JSON p50 / p99, TTFT p50 / p99 (ms) |\n")
+	sb.WriteString("|---|---:|---:|---:|---:|---:|---|\n")
+	for _, p := range names {
+		kj := key{payload: p, stream: false, rate: payloads[p]}
+		ks := key{payload: p, stream: true, rate: payloads[p]}
+		sj, bj, rj := by[subject][kj], by[baseline][kj], by[repeat][kj]
+		ss, bs, rs := by[subject][ks], by[baseline][ks], by[repeat][ks]
+		if sj.Label == "" || bj.Label == "" || ss.Label == "" || bs.Label == "" || ss.Summary.TTFT == nil || bs.Summary.TTFT == nil {
+			continue
+		}
+		noise := "n/a"
+		if rj.Label != "" && rs.Label != "" && rs.Summary.TTFT != nil {
+			noise = fmt.Sprintf("%.1f / %.1f, %.1f / %.1f",
+				abs(rj.Summary.Total.P50-bj.Summary.Total.P50), abs(rj.Summary.Total.P99-bj.Summary.Total.P99),
+				abs(rs.Summary.TTFT.P50-bs.Summary.TTFT.P50), abs(rs.Summary.TTFT.P99-bs.Summary.TTFT.P99))
+		}
+		fmt.Fprintf(&sb, "| %s | %+.1f | %+.1f | %+.1f | %+.1f | %.1f / %.1f | %s |\n", p,
+			sj.Summary.Total.P50-bj.Summary.Total.P50, sj.Summary.Total.P99-bj.Summary.Total.P99,
+			ss.Summary.TTFT.P50-bs.Summary.TTFT.P50, ss.Summary.TTFT.P99-bs.Summary.TTFT.P99,
+			bs.Summary.TTFT.P50, bs.Summary.TTFT.P99, noise)
+	}
+	return sb.String()
+}
+
+func abs(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
